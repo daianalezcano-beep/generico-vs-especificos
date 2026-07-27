@@ -87,15 +87,22 @@ os.makedirs(SS_DIR, exist_ok=True)
 LIMIT_PRUEBA = 5
 
 # Tipo de cambio ARS→USD a aplicar sobre las filas cuya moneda leída en
-# RATES (columna BUY/SELL CURRENCY) sea ARS — dato manual, cargado por
-# la usuaria antes de correr (ver config/tipo_cambio.csv, DISENO.md
-# sección "Moneda"). La moneda en sí NO se configura a mano: se lee por
-# línea directamente de Tourplan.
-TIPO_CAMBIO_CSV = "config/tipo_cambio.csv"
+# RATES (columna BUY/SELL CURRENCY) sea ARS — se edita directamente ACÁ,
+# no hace falta ningún CSV aparte (ver DISENO.md sección "Moneda"). La
+# moneda en sí NO se configura a mano: se lee por línea directamente de
+# Tourplan. None = no convertir (las filas en ARS quedan sin TARIFA_USD
+# hasta que se complete este valor).
+TIPO_CAMBIO_ARS_USD = None
 
 VELOCIDAD = 1.0  # multiplicador de todos los time.sleep — subir si la red es lenta
 
+# Mostrar las capturas inline al correr en Colab/Jupyter (además de
+# guardarlas siempre en SS_DIR). Opcional — con muchos códigos ensucia
+# mucho el output del notebook, por eso queda en False por default.
+MOSTRAR_CAPTURAS = False
+
 _ss_n = [0]
+_avisado_sin_ipython = [False]
 
 
 # ── Helpers base (REUTILIZADO tal cual de los scripts hermanos) ────
@@ -105,6 +112,15 @@ def ss(driver, nombre):
     p = f"{SS_DIR}/{_ss_n[0]:03d}_{nombre[:40]}_{int(time.time())}.png"
     driver.save_screenshot(p)
     print(f"  📸 {os.path.basename(p)}")
+    if MOSTRAR_CAPTURAS:
+        try:
+            from IPython.display import display, Image as IPyImage
+            display(IPyImage(p, width=900))
+        except ImportError:
+            if not _avisado_sin_ipython[0]:
+                print("    ⚠ MOSTRAR_CAPTURAS=True pero no hay IPython disponible "
+                      "(sólo se ve inline en Colab/Jupyter) — se sigue guardando en disco.")
+                _avisado_sin_ipython[0] = True
 
 
 def dump(driver, nombre):
@@ -599,19 +615,6 @@ def descubrir_cola(driver, comparaciones):
     return cola
 
 
-def cargar_tipo_cambio(path):
-    """Tipo de cambio ARS→USD dado a mano (ver config/tipo_cambio.csv,
-    DISENO.md sección Moneda). Un único valor — no varía por
-    transportista, a diferencia de la moneda (que sí se lee por línea
-    directamente de Tourplan, ver leer_tarifa_vigente_componente)."""
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        fila = next(csv.DictReader(f), None)
-    valor = (fila or {}).get("TIPO_CAMBIO_ARS_USD", "").strip()
-    if not valor:
-        return None
-    return float(valor.replace(",", "."))
-
-
 def convertir_a_usd(tarifa, moneda, tipo_cambio):
     """None si no se puede convertir con confianza: falta la tarifa,
     la moneda vino vacía (columna CURRENCY no encontrada), la moneda no
@@ -630,10 +633,10 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
 # ── Main ──────────────────────────────────────────────────────────
 
 def main():
-    tipo_cambio = cargar_tipo_cambio(TIPO_CAMBIO_CSV)
+    tipo_cambio = TIPO_CAMBIO_ARS_USD
     if tipo_cambio is None:
-        print(f"⚠ Sin TIPO_CAMBIO_ARS_USD cargado en {TIPO_CAMBIO_CSV} — "
-              f"las filas en ARS quedarán sin TARIFA_USD hasta completarlo.")
+        print(f"⚠ Sin TIPO_CAMBIO_ARS_USD cargado (constante al principio del "
+              f"script) — las filas en ARS quedarán sin TARIFA_USD hasta completarlo.")
 
     driver = crear_driver()
     filas_salida = []

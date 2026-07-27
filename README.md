@@ -31,13 +31,11 @@ de la validación contra datos reales.
 - `extraccion_tarifas_vigentes.py` — extracción de tarifa vigente por
   código (Fase 1), Selenium contra Tourplan NX. No necesita CSV/Excel de
   entrada — busca los códigos él mismo en Tourplan. Editar `USERNAME`,
-  `PASSWORD` y `COMPARACIONES` antes de correr.
+  `PASSWORD`, `COMPARACIONES` y `TIPO_CAMBIO_ARS_USD` (todo al principio
+  del archivo) antes de correr. `MOSTRAR_CAPTURAS=True` muestra las
+  capturas inline si se corre en Colab/Jupyter (opcional).
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
   por location/categoría/guía (editable, sin hardcodear en código).
-- `config/tipo_cambio.csv` — tipo de cambio ARS→USD a aplicar sobre las
-  filas cuya moneda (leída directamente de Tourplan, columna BUY/SELL
-  CURRENCY de RATES) sea ARS. Único dato manual de moneda — completar
-  antes de correr `extraccion_tarifas_vigentes.py` (ver DISENO.md).
 - `muestras/` — 3 Product List reales (TRFPO + 2 transportistas, BUE)
   usados para validar el matching.
 

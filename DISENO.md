@@ -8,10 +8,9 @@ ajustan/precisan lo que dice `BRIEF.md` a partir de datos reales).
 
 Fase 1 (extracción de tarifas vigentes) + Fase 2 (motor de matching) +
 capa de conversión de moneda. Fase 3 (comparación de gap) y Fase 4
-(salida Excel) quedan para una siguiente entrega — los archivos de
-config de esta entrega (`tabla_bases_vehiculo_pax.csv`,
-`tipo_cambio.csv`) ya están armados para que Fase 3 los consuma sin
-cambios de esquema.
+(salida Excel) quedan para una siguiente entrega — el archivo de config
+de esta entrega (`tabla_bases_vehiculo_pax.csv`) ya está armado para
+que Fase 3 lo consuma sin cambios de esquema.
 
 ## Reuso de las herramientas hermanas
 
@@ -86,13 +85,14 @@ vez de asumirse.
 
 Conversión: sólo se completa `TARIFA_USD` cuando la moneda leída es
 `USD` (se copia tal cual) o `ARS` (se divide por `TIPO_CAMBIO_ARS_USD`,
-`config/tipo_cambio.csv` — un único valor dado a mano por la usuaria,
-no buscado automáticamente, igual que el subcode de prueba del
-simulador hermano). Si la moneda es ARS pero no hay tipo de cambio
-cargado, o si la columna de moneda no se encuentra en la grilla real
-(headers no confirmados todavía contra Tourplan — ver más abajo),
-`TARIFA_USD` queda vacío en vez de inventar un valor, y el script avisa
-por consola para que se complete/revise a mano.
+constante al principio de `extraccion_tarifas_vigentes.py` — un único
+valor editado directamente en el script por la usuaria, sin CSV aparte,
+igual que el subcode de prueba del simulador hermano). Si la moneda es
+ARS pero `TIPO_CAMBIO_ARS_USD` quedó en `None`, o si la columna de
+moneda no se encuentra en la grilla real (headers no confirmados
+todavía contra Tourplan — ver más abajo), `TARIFA_USD` queda vacío en
+vez de inventar un valor, y el script avisa por consola para que se
+complete/revise a mano.
 
 Sin confirmar todavía: el texto exacto del header en el DOM (¿dice
 literalmente "BUY CURRENCY" o alguna variante como "Buy Ccy"?) y si el
