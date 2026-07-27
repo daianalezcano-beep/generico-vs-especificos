@@ -553,12 +553,13 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
     permite a este script no necesitar ningún CSV/Excel de entrada: le
     alcanza con (location, supplier) — ver COMPARACIONES.
 
-    ⚠ Heurística de columnas SIN CONFIRMAR contra una grilla real
-    (código = celda corta alfanumérica en mayúsculas, descripción =
-    la celda de texto más larga de la fila) — si en la corrida real
-    devuelve basura, revisar el screenshot/dump y ajustar el regex.
-    Tampoco maneja paginación todavía: si la grilla pagina resultados
-    sólo se lee la página visible y se avisa por consola."""
+    Columna de código identificada por HEADER de la tabla (el `th` cuyo
+    texto es "Code", no cualquier celda corta que "parezca" un código —
+    eso confundía la columna Location, ej. "BUE", con el código real).
+    Si no encuentra un header que matchee, avisa con los headers vistos
+    en vez de adivinar. Tampoco maneja paginación todavía: si la grilla
+    pagina resultados sólo se lee la página visible y se avisa por
+    consola."""
     location = str(location).strip() if location not in (None, "") else ""
     supplier = str(supplier).strip() if supplier not in (None, "") else ""
     print(f"\n  📋 Listando códigos: {location}/{supplier}"
@@ -568,29 +569,60 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
     ss(driver, f"listado_{supplier[:15]}")
 
     resultado = driver.execute_script(r"""
-        var rows = Array.from(document.querySelectorAll('table tbody tr'));
+        var tables = Array.from(document.querySelectorAll('table'));
+        var target = null, headers = [];
+        for (var t of tables){
+            var ths = Array.from(t.querySelectorAll('th')).map(h => h.innerText.trim());
+            if (ths.some(h => /CODE/i.test(h))){ target = t; headers = ths; break; }
+        }
+        if (!target){
+            for (var t of tables){
+                if (t.querySelectorAll('tbody tr').length){ target = t; break; }
+            }
+        }
+        if (!target) return {items: [], paginado: false, total_filas: 0, headers: []};
+
+        var idxCode = headers.findIndex(h => /^CODE$/i.test(h));
+        if (idxCode < 0) idxCode = headers.findIndex(h => /CODE/i.test(h) && !/SERVICE/i.test(h));
+        var idxLoc  = headers.findIndex(h => /LOCATION/i.test(h));
+        var idxDesc = headers.findIndex(h => /DESCRIPTION/i.test(h));
+
+        var rows = Array.from(target.querySelectorAll('tbody tr'));
         var out = rows.map(function(tr){
-            var tds = Array.from(tr.querySelectorAll('td'))
-                .filter(function(td){ return td.children.length === 0; });
-            var textos = tds.map(function(td){ return td.innerText.trim(); }).filter(Boolean);
-            if (!textos.length) return null;
-            var codigo = textos.find(function(t){ return /^[A-Z0-9]{2,10}$/.test(t); }) || '';
-            var descripcion = textos.reduce(function(a, b){ return b.length > a.length ? b : a; }, '');
+            var tds = Array.from(tr.querySelectorAll('td'));
+            var codigo, descripcion;
+            if (idxCode >= 0 && tds[idxCode]){
+                codigo = tds[idxCode].innerText.trim();
+            } else {
+                var textos = tds.map(function(td){ return td.innerText.trim(); }).filter(Boolean);
+                codigo = textos.find(function(t, i){
+                    return /^[A-Z0-9]{2,10}$/.test(t) && i !== idxLoc;
+                }) || '';
+            }
+            if (idxDesc >= 0 && tds[idxDesc]){
+                descripcion = tds[idxDesc].innerText.trim();
+            } else {
+                var textos2 = tds.map(function(td){ return td.innerText.trim(); }).filter(Boolean);
+                descripcion = textos2.reduce(function(a, b){ return b.length > a.length ? b : a; }, '');
+            }
             return {codigo: codigo, descripcion: descripcion};
-        }).filter(function(r){ return r && r.codigo; });
+        }).filter(function(r){ return r.codigo; });
+
         var paginado = !!document.querySelector("[class*='pagin' i], [class*='pager' i]");
-        return {items: out, paginado: paginado, total_filas: rows.length};
+        return {items: out, paginado: paginado, total_filas: rows.length, headers: headers};
     """)
 
     if not resultado or not resultado.get("items"):
         dump(driver, f"listado_vacio_{supplier[:15]}")
-        print(f"    ⚠ No encontré resultados para {location}/{supplier}")
+        print(f"    ⚠ No encontré resultados para {location}/{supplier} "
+              f"(headers vistos: {resultado.get('headers') if resultado else '?'})")
         return []
     if resultado.get("paginado"):
         print(f"    ⚠ La grilla parece tener paginación (detecté un elemento con "
               f"clase 'pagin'/'pager') — sólo se leyó la página visible "
               f"({len(resultado['items'])} códigos). Revisar {SS_DIR}/listado_{supplier[:15]}*.png")
-    print(f"    → {len(resultado['items'])} códigos encontrados")
+    print(f"    → {len(resultado['items'])} códigos encontrados "
+          f"(headers: {resultado.get('headers')})")
     return resultado["items"]
 
 
