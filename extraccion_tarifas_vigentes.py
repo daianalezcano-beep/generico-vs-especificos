@@ -5,8 +5,9 @@
 #   Adaptado de:
 #   - tourplan_valorizacion_pkg_v3.py (Tourplan-Valorizacion-EX-TF):
 #     buscar_producto, _leer_tabla_rates, _extraer_valores_ad,
-#     helpers base (ss/jc/set_val/wait/waitx/crear_driver/login/
-#     hamburger/menu_item).
+#     detección/instalación de Google Chrome en Colab (no viene
+#     preinstalado), helpers base (ss/jc/set_val/wait/waitx/
+#     crear_driver/login/hamburger/menu_item).
 #   - cbd_impact_simulator_pkg.py (cbd-impact-simulator-pkg):
 #     versión de buscar_producto que además abre el resultado y
 #     confirma el contexto de producto (_en_contexto_producto),
@@ -33,11 +34,12 @@
 #   ajuste.
 # ============================================================
 
-import os, sys, subprocess, importlib, time, re, csv
+import os, sys, subprocess, importlib, shutil, time, re, csv
 from datetime import datetime
 
 print("🔧 Verificando entorno...\n")
 
+# ── Paquetes Python ──────────────────────────────────────────
 _PIPS_NEEDED = {
     "selenium":          "selenium",
     "webdriver_manager": "webdriver-manager",
@@ -46,6 +48,99 @@ _pips_faltantes = [pkg for mod, pkg in _PIPS_NEEDED.items()
                    if importlib.util.find_spec(mod) is None]
 if _pips_faltantes:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q"] + _pips_faltantes, check=True)
+
+# ── Google Chrome (REUTILIZADO tal cual de tourplan_valorizacion_pkg_v3.py
+# — Colab NO trae Chrome preinstalado, hay que detectarlo/instalarlo cada
+# corrida porque Colab resetea el entorno cuando pierde actividad) ──────
+
+def _chrome_version(path):
+    try:
+        r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=8)
+        v = (r.stdout or r.stderr).strip()
+        return v if v and any(c.isdigit() for c in v) else ""
+    except Exception:
+        return ""
+
+
+def _find_chrome():
+    for name in ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium"]:
+        p = shutil.which(name)
+        if p:
+            v = _chrome_version(p)
+            if v:
+                return p, v
+    for path in ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"]:
+        if os.path.exists(path):
+            v = _chrome_version(path)
+            if v:
+                return path, v
+    return None, ""
+
+
+CHROMIUM_BIN, ver_chrome = _find_chrome()
+
+
+def _instalar_chrome():
+    """Instala google-chrome-stable en Colab. Estrategia 1: repo oficial
+    de Google. Estrategia 2: descarga directa del .deb (fallback)."""
+    DEVNULL = subprocess.DEVNULL
+
+    def _apt_update():
+        subprocess.run(["apt-get", "update", "-qq"], stdout=DEVNULL, stderr=DEVNULL)
+
+    e1 = None
+    try:
+        print("  ⏳ Agregando repo Google Chrome y ejecutando apt...")
+        subprocess.run(
+            "wget -qO- https://dl.google.com/linux/linux_signing_key.pub "
+            "| gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg",
+            shell=True, check=True, stdout=DEVNULL, stderr=DEVNULL)
+        with open("/etc/apt/sources.list.d/google-chrome.list", "w") as f:
+            f.write("deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] "
+                    "https://dl.google.com/linux/chrome/deb/ stable main\n")
+        _apt_update()
+        subprocess.run(["apt-get", "install", "-y", "-qq", "google-chrome-stable"],
+                       check=True, stdout=DEVNULL, stderr=DEVNULL)
+        if _find_chrome()[0]:
+            return
+    except Exception as e:
+        e1 = e
+        print(f"  ⚠ Repo Google falló ({e1}), probando descarga directa...")
+
+    try:
+        deb = "/tmp/google-chrome-stable.deb"
+        url = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb"
+        print(f"  ⏳ Descargando {url} ...")
+        subprocess.run(["wget", "-q", "-O", deb, url], check=True)
+        print("  ⏳ Instalando .deb ...")
+        subprocess.run(["dpkg", "-i", deb], stdout=DEVNULL, stderr=DEVNULL)
+        _apt_update()
+        subprocess.run(["apt-get", "install", "-f", "-y", "-qq"],
+                       check=True, stdout=DEVNULL, stderr=DEVNULL)
+        print("  ✅ Chrome instalado via .deb")
+    except Exception as e2:
+        raise EnvironmentError(
+            f"No se pudo instalar google-chrome-stable.\n"
+            f"  Repo: {e1 if e1 else 'n/a'}\n"
+            f"  .deb:  {e2}\n"
+            "Intentá manualmente en Colab:\n"
+            "  !wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb\n"
+            "  !dpkg -i google-chrome-stable_current_amd64.deb\n"
+            "  !apt-get install -f -y")
+
+
+if not CHROMIUM_BIN:
+    print("  ⏳ Chrome no encontrado, instalando...")
+    _instalar_chrome()
+    CHROMIUM_BIN, ver_chrome = _find_chrome()
+    if CHROMIUM_BIN:
+        print(f"  ✅ Chrome instalado: {ver_chrome}")
+    else:
+        raise EnvironmentError(
+            "Chrome instalado pero no encontrado. "
+            "Reiniciá el runtime de Colab y volvé a correr la celda.")
+else:
+    print(f"  ✅ Chrome OK: {CHROMIUM_BIN}  [{ver_chrome}]")
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -158,10 +253,12 @@ def crear_driver():
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1366,911")
     opts.add_argument("--disable-gpu")
+    if CHROMIUM_BIN:
+        opts.binary_location = CHROMIUM_BIN
     drv_path = ChromeDriverManager().install()
     svc = Service(executable_path=drv_path)
     d = webdriver.Chrome(service=svc, options=opts)
-    print("✅ Driver iniciado")
+    print(f"✅ Driver iniciado (Chrome: {CHROMIUM_BIN or 'default del sistema'})")
     return d
 
 
