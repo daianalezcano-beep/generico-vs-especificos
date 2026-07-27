@@ -34,7 +34,7 @@
 #   ajuste.
 # ============================================================
 
-import os, sys, subprocess, importlib, shutil, time, re, csv
+import os, sys, subprocess, importlib, shutil, time, re
 from datetime import datetime
 
 print("🔧 Verificando entorno...\n")
@@ -43,6 +43,7 @@ print("🔧 Verificando entorno...\n")
 _PIPS_NEEDED = {
     "selenium":          "selenium",
     "webdriver_manager": "webdriver-manager",
+    "openpyxl":          "openpyxl",
 }
 _pips_faltantes = [pkg for mod, pkg in _PIPS_NEEDED.items()
                    if importlib.util.find_spec(mod) is None]
@@ -150,6 +151,9 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
+from openpyxl import Workbook
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 
 # ── Config ────────────────────────────────────────────────────
 USERNAME   = "poner minusculas"
@@ -169,9 +173,27 @@ COMPARACIONES = [
         "transportistas": ["1TEP01", "6HOUS1"],
     },
 ]
-OUTPUT_CSV = "tarifas_vigentes.csv"
-SS_DIR     = "screenshots"
+OUTPUT_XLSX = "tarifas_vigentes.xlsx"
+SS_DIR      = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
+
+# Rango de fechas a analizar — cada código puede tener varios períodos
+# de RATES cargados (ver DISENO.md sección "Períodos"); se procesan
+# TODOS los que se superponen con este rango, no sólo uno. Formato
+# "dd/Mon/yyyy" (ej. "01/Jan/2026") o "dd/mm/yyyy". Si ambos quedan en
+# None, se usa HOY como rango de un solo día — o sea, sólo el período
+# vigente en este momento (comportamiento equivalente al de antes de
+# que existiera este filtro).
+PERIODO_ANALISIS_DESDE = None
+PERIODO_ANALISIS_HASTA = None
+
+# Price Code a filtrar en la lista de RATES antes de leer valores. En
+# modo "All Price Codes" (vista agregada default de Tourplan) los
+# valores mostrados NO son los persistidos — leer ahí puede devolver
+# 0.0 silenciosamente (hallazgo real de tourplan_valorizacion_pkg_v3.py,
+# ver DISENO.md). "ALL"/""/None = no filtrar (arriesga el problema
+# anterior si el período tiene más de un price code cargado).
+PRICE_CODE_DEFAULT = "TR"
 
 # Límite de códigos a procesar en esta corrida (0 = sin límite, procesa
 # toda la cola). Para la primera prueba contra Tourplan real conviene
@@ -626,6 +648,166 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
     return resultado["items"]
 
 
+# ── Períodos de RATES (REUTILIZADO tal cual de
+# tourplan_valorizacion_pkg_v3.py::actualizar_rates_servicio_madre —
+# _leer_periodos/_parse_rate_period/_seleccionar_price_code, selectores
+# confirmados contra Tourplan real: td.tpcol-rateperiod,
+# td.tpcol-pricecodecode, #priceCodeModeSelected, #priceCode) ────────
+
+MESES_ES = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+            "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12}
+
+
+def parsear_fecha(txt):
+    """'01/Apr/2026', '01/04/2026' o '2026-04-01' → datetime. None si
+    no matchea ningún formato conocido."""
+    if not txt:
+        return None
+    if isinstance(txt, datetime):
+        return txt
+    txt = str(txt).strip()
+    if len(txt) >= 10 and txt[4] == "-" and txt[7] == "-":
+        try:
+            return datetime.fromisoformat(txt[:10])
+        except Exception:
+            pass
+    p = txt.split("/")
+    if len(p) == 3:
+        try:
+            dia = int(p[0])
+            mes_raw = p[1]
+            mes = MESES_ES.get(mes_raw[:3].capitalize()) or int(mes_raw)
+            anio_raw = int(p[2])
+            anio = anio_raw + 2000 if anio_raw < 100 else anio_raw
+            return datetime(anio, mes, dia)
+        except Exception:
+            pass
+    return None
+
+
+def _parse_rate_period(texto):
+    """Parsea '01/Apr/2026 - 31/Aug/2026' → (datetime, datetime)."""
+    m = re.search(r'(\d+/\w+/\d+)\s*[-–]\s*(\d+/\w+/\d+)', texto or "")
+    if m:
+        return parsear_fecha(m.group(1)), parsear_fecha(m.group(2))
+    return None, None
+
+
+def _seleccionar_price_code(driver, code, etiqueta=""):
+    """En la lista de RATES (o dentro de un período ya abierto), pasa
+    el modo a 'Selected Price Code' y elige el price code indicado.
+    En modo 'All Price Codes' (default) la grilla es la vista agregada
+    y lo que se lee ahí NO es lo persistido (puede leerse 0.0 sin
+    ningún error — hallazgo real del script hermano). code vacío o
+    "ALL"/"UNASSIGNED" no hace nada (se deja la vista default)."""
+    code = (code or "").strip().upper()
+    if not code or code in ("ALL", "TODOS", "*", "UNASSIGNED"):
+        return False
+    try:
+        driver.execute_script("""
+            var lbl = document.querySelector('label[for="priceCodeModeSelected"]');
+            var inp = document.getElementById('priceCodeModeSelected');
+            if (lbl) lbl.click();
+            if (inp) inp.click();
+        """)
+        time.sleep(1.5 * VELOCIDAD)
+        driver.execute_script("""
+            var dd = document.getElementById('priceCode');
+            if (!dd) return;
+            var inp = dd.querySelector('input[type="text"], input');
+            if (inp){ inp.focus(); inp.click(); } else { dd.click(); }
+        """)
+        time.sleep(1.0 * VELOCIDAD)
+        driver.execute_script("""
+            var dd = document.getElementById('priceCode');
+            if (!dd) return;
+            var inp = dd.querySelector('input[type="text"], input');
+            if (!inp) return;
+            var setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+            setter.call(inp, arguments[0]);
+            inp.dispatchEvent(new Event('input', {bubbles:true}));
+            inp.dispatchEvent(new Event('keyup', {bubbles:true}));
+        """, code)
+        time.sleep(1.2 * VELOCIDAD)
+        elegido = driver.execute_script("""
+            var pc = arguments[0].toUpperCase();
+            var dd = document.getElementById('priceCode');
+            if (!dd) return null;
+            function vis(e){return !!(e.offsetWidth||e.offsetHeight||e.getClientRects().length);}
+            function match(tr){
+                var cod = tr.querySelector('td.code');
+                var des = tr.querySelector('td.description');
+                var ct = cod ? (cod.innerText||cod.textContent||'').trim().toUpperCase() : '';
+                var dt = des ? (des.innerText||des.textContent||'').trim().toUpperCase() : '';
+                if (ct===pc || dt===pc || dt.indexOf(pc+' ')===0 ||
+                    dt.indexOf(pc+'-')===0 || dt.indexOf(pc+' -')===0)
+                    return {tr:tr, txt:ct + ' | ' + dt};
+                return null;
+            }
+            var rows = Array.from(dd.querySelectorAll('table tr'));
+            var cand = null;
+            for (var tr of rows){ if (vis(tr)){ var m=match(tr); if(m){cand=m;break;} } }
+            if (!cand){ for (var tr2 of rows){ var m2=match(tr2); if(m2){cand=m2;break;} } }
+            if (!cand) return null;
+            try{ cand.tr.scrollIntoView({block:'center'}); }catch(e){}
+            var des = cand.tr.querySelector('td.description');
+            var cod = cand.tr.querySelector('td.code');
+            (des||cod||cand.tr).click();
+            cand.tr.click();
+            return cand.txt;
+        """, code)
+        time.sleep(2.5 * VELOCIDAD)
+        print(f"    Price Code '{code}' seleccionado ({etiqueta}): {elegido}")
+        if not elegido:
+            ss(driver, f"pricecode_fail_{(etiqueta or code)[:12]}")
+        return bool(elegido)
+    except Exception as e:
+        print(f"    ⚠ No pude seleccionar Price Code '{code}' ({etiqueta}): {e}")
+        return False
+
+
+def _leer_periodos_rates(driver):
+    """Lista de {texto, desde, hasta, price_code} de la grilla de
+    RATES actualmente visible (lista de períodos, no el detalle de
+    uno). Cada fila trae la fecha en td.tpcol-rateperiod y su price
+    code en td.tpcol-pricecodecode (selectores reales confirmados)."""
+    filas = driver.execute_script("""
+        var out = [];
+        document.querySelectorAll('td.tpcol-rateperiod').forEach(function(d){
+            var tr = d.closest('tr');
+            var p = tr ? tr.querySelector('td.tpcol-pricecodecode') : null;
+            out.push({texto: (d.innerText||'').trim(),
+                      price_code: p ? (p.innerText||'').trim() : ''});
+        });
+        return out;
+    """) or []
+    out = []
+    for f in filas:
+        desde, hasta = _parse_rate_period(f["texto"])
+        out.append({"texto": f["texto"], "price_code": f["price_code"],
+                    "desde": desde, "hasta": hasta})
+    return out
+
+
+def _periodos_en_rango(periodos, desde_str, hasta_str):
+    """Índices de `periodos` cuyo rango de fechas se superpone con
+    [desde_str, hasta_str]. Si ambos son None, usa HOY como rango de
+    un solo día (o sea, el período vigente ahora mismo). Períodos sin
+    fecha parseable (texto inesperado) se descartan con aviso, no se
+    incluyen "por si acaso"."""
+    objetivo_desde = parsear_fecha(desde_str) if desde_str else datetime.now()
+    objetivo_hasta = parsear_fecha(hasta_str) if hasta_str else datetime.now()
+    idxs = []
+    for i, p in enumerate(periodos):
+        if not (p["desde"] and p["hasta"]):
+            print(f"    ⚠ Período con fecha no parseable, se descarta: {p['texto']!r}")
+            continue
+        if p["desde"] <= objetivo_hasta and p["hasta"] >= objetivo_desde:
+            idxs.append(i)
+    return idxs
+
+
 # ── Lectura de la grilla RATES del componente (REUTILIZADO de
 # tourplan_valorizacion_pkg_v3.py — _leer_tabla_rates/_extraer_valores_ad,
 # generalizado para devolver el rango de pax desde/hasta en vez de sólo
@@ -663,39 +845,11 @@ def _listar_tablas_pagina(driver):
     """)
 
 
-def leer_tarifa_vigente_componente(driver, codigo):
-    """Abre el tab RATES del producto ya en contexto (ver
-    buscar_producto) y devuelve una lista de {pax_desde, pax_hasta,
-    tarifa, moneda} — sólo filas de rango de pax adulto (AD), igual
-    criterio que _extraer_valores_ad. NO recorre históricos de período —
-    lee la grilla tal como aparece por defecto (se asume que Tourplan
-    muestra ahí la tarifa vigente; sin confirmar contra una corrida real
-    con más de un período cargado — ver DISENO.md).
-
-    Moneda: cada período de Rates tiene columnas BUY CURRENCY y SELL
-    CURRENCY, por defecto cargadas iguales — confirmado por la usuaria,
-    así que alcanza con leer una (se prioriza BUY si ambas existen). No
-    hay fallback a config manual: si esta columna no aparece en la
-    grilla real, la fila queda con moneda vacía y se avisa (ver
-    DISENO.md), en vez de asumir una moneda por transportista."""
-    hamburger(driver)
-    menu_item(driver, "RATES")
-    time.sleep(3 * VELOCIDAD)
-    ss(driver, f"rates_{codigo[:10]}")
-
-    tabla = _leer_tabla_rates(driver)
-    for _ in range(3):
-        if tabla:
-            break
-        time.sleep(2 * VELOCIDAD)
-        tabla = _leer_tabla_rates(driver)
-    if not tabla:
-        dump(driver, f"rates_sin_tabla_{codigo[:10]}")
-        tablas_vistas = _listar_tablas_pagina(driver)
-        print(f"    ⚠ No encontré tabla de RATES (con columna COST) para {codigo}")
-        print(f"      Tablas visibles en la página (headers): {tablas_vistas}")
-        return []
-
+def _extraer_filas_ad(tabla, codigo):
+    """De una tabla ya leída con _leer_tabla_rates, devuelve las filas
+    de rango de pax adulto (AD) como {pax_desde, pax_hasta, tarifa,
+    moneda} — igual criterio que _extraer_valores_ad del script
+    hermano. No toca período/price code, eso lo maneja el llamador."""
     headers = tabla["headers"]
     idx_svc = next((i for i, h in enumerate(headers) if "SERVICE" in h.upper()), 0)
     idx_cost = next((i for i, h in enumerate(headers)
@@ -704,11 +858,10 @@ def leer_tarifa_vigente_componente(driver, codigo):
                      if "BUY" in h.upper() and "CURRENC" in h.upper()), None)
     if idx_ccy is None:
         idx_ccy = next((i for i, h in enumerate(headers) if "CURRENC" in h.upper()), None)
-    pat_rango = re.compile(r'(\d+)\s*[-–]\s*(\d+)')
-
     if idx_ccy is None:
         print(f"    ⚠ No encontré columna de moneda (BUY/SELL CURRENCY) en RATES "
               f"para {codigo} — headers: {headers}")
+    pat_rango = re.compile(r'(\d+)\s*[-–]\s*(\d+)')
 
     out = []
     for row in tabla["rows"]:
@@ -734,6 +887,95 @@ def leer_tarifa_vigente_componente(driver, codigo):
             "tarifa": valor,
             "moneda": moneda,
         })
+    return out
+
+
+def _abrir_lista_rates(driver, codigo, etiqueta):
+    """Navega (o vuelve a navegar) a RATES desde el producto en
+    contexto, y aplica el filtro de PRICE_CODE_DEFAULT si corresponde.
+    Se llama de nuevo por cada período a abrir porque, al entrar al
+    detalle de un período, no queda forma confirmada de "volver" a la
+    lista salvo renavegar (mismo patrón de re-navegación que usa
+    tourplan_valorizacion_pkg_v3.py en su verificación post-SAVE)."""
+    hamburger(driver)
+    menu_item(driver, "RATES")
+    time.sleep(3 * VELOCIDAD)
+    if PRICE_CODE_DEFAULT:
+        _seleccionar_price_code(driver, PRICE_CODE_DEFAULT, etiqueta=etiqueta)
+        time.sleep(1.5 * VELOCIDAD)
+    ss(driver, f"rates_lista_{codigo[:10]}")
+
+
+def leer_tarifa_vigente_componente(driver, codigo):
+    """Abre el tab RATES del producto ya en contexto (ver
+    buscar_producto), identifica qué período(s) caen dentro de
+    [PERIODO_ANALISIS_DESDE, PERIODO_ANALISIS_HASTA] (por defecto, sólo
+    el período vigente hoy — ver esa constante), abre cada uno y lee su
+    grilla de tarifas. Devuelve una lista de {pax_desde, pax_hasta,
+    tarifa, moneda, periodo_desde, periodo_hasta, price_code} — un
+    conjunto de filas AD por cada período que matcheó.
+
+    Moneda: cada período de Rates tiene columnas BUY CURRENCY y SELL
+    CURRENCY, por defecto cargadas iguales — confirmado por la usuaria,
+    así que alcanza con leer una (se prioriza BUY si ambas existen). No
+    hay fallback a config manual: si esta columna no aparece en la
+    grilla real, la fila queda con moneda vacía y se avisa (ver
+    DISENO.md), en vez de asumir una moneda por transportista."""
+    _abrir_lista_rates(driver, codigo, etiqueta=f"lista {codigo}")
+
+    periodos = _leer_periodos_rates(driver)
+    if not periodos:
+        dump(driver, f"rates_sin_periodos_{codigo[:10]}")
+        tablas_vistas = _listar_tablas_pagina(driver)
+        print(f"    ⚠ No encontré lista de períodos de RATES para {codigo}")
+        print(f"      Tablas visibles en la página (headers): {tablas_vistas}")
+        return []
+
+    idxs = _periodos_en_rango(periodos, PERIODO_ANALISIS_DESDE, PERIODO_ANALISIS_HASTA)
+    if not idxs:
+        print(f"    ⚠ Ningún período de {codigo} cae dentro del rango configurado "
+              f"(PERIODO_ANALISIS_DESDE/HASTA) — períodos vistos: "
+              f"{[p['texto'] for p in periodos]}")
+        return []
+    print(f"    → {len(idxs)}/{len(periodos)} período(s) dentro del rango: "
+          f"{[periodos[i]['texto'] for i in idxs]}")
+
+    out = []
+    for n, idx in enumerate(idxs):
+        if n > 0:
+            # Renavegar: el DOM de la lista se perdió al entrar al período anterior.
+            _abrir_lista_rates(driver, codigo, etiqueta=f"lista {codigo} (período {n+1})")
+        periodo = periodos[idx]
+        filas_periodo = driver.find_elements(By.CSS_SELECTOR, "td.tpcol-rateperiod")
+        if idx >= len(filas_periodo):
+            print(f"    ⚠ El período {periodo['texto']!r} de {codigo} ya no está en la "
+                  f"posición esperada tras renavegar — se salta.")
+            continue
+        jc(driver, filas_periodo[idx])
+        time.sleep(5 * VELOCIDAD)
+        ss(driver, f"rates_periodo_{codigo[:10]}_{n+1}")
+        if PRICE_CODE_DEFAULT:
+            _seleccionar_price_code(driver, PRICE_CODE_DEFAULT, etiqueta=f"período {codigo}")
+
+        tabla = _leer_tabla_rates(driver)
+        for _ in range(3):
+            if tabla:
+                break
+            time.sleep(2 * VELOCIDAD)
+            tabla = _leer_tabla_rates(driver)
+        if not tabla:
+            dump(driver, f"rates_sin_tabla_{codigo[:10]}_{n+1}")
+            tablas_vistas = _listar_tablas_pagina(driver)
+            print(f"    ⚠ No encontré tabla de RATES (con columna COST) para {codigo} "
+                  f"período {periodo['texto']!r}")
+            print(f"      Tablas visibles en la página (headers): {tablas_vistas}")
+            continue
+
+        for fila in _extraer_filas_ad(tabla, codigo):
+            fila["periodo_desde"] = periodo["desde"].strftime("%d/%m/%Y") if periodo["desde"] else ""
+            fila["periodo_hasta"] = periodo["hasta"].strftime("%d/%m/%Y") if periodo["hasta"] else ""
+            fila["price_code"] = periodo["price_code"]
+            out.append(fila)
     return out
 
 
@@ -817,6 +1059,9 @@ def main():
                         "SUPPLIER": item["supplier"],
                         "PRODUCT_CODE": item["codigo"],
                         "ES_GENERICO": item["es_generico"],
+                        "PERIODO_DESDE": t.get("periodo_desde", ""),
+                        "PERIODO_HASTA": t.get("periodo_hasta", ""),
+                        "PRICE_CODE": t.get("price_code", ""),
                         "PAX_DESDE": t["pax_desde"],
                         "PAX_HASTA": t["pax_hasta"],
                         "TARIFA_VIGENTE": t["tarifa"],
@@ -833,13 +1078,21 @@ def main():
     finally:
         driver.quit()
 
-    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        cols = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PAX_DESDE", "PAX_HASTA",
-                "TARIFA_VIGENTE", "MONEDA", "TARIFA_USD", "LOCATION", "TIMESTAMP"]
-        w = csv.DictWriter(f, fieldnames=cols)
-        w.writeheader()
-        w.writerows(filas_salida)
-    print(f"\n✅ {len(filas_salida)} filas escritas en {OUTPUT_CSV}")
+    cols = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PERIODO_DESDE", "PERIODO_HASTA",
+            "PRICE_CODE", "PAX_DESDE", "PAX_HASTA", "TARIFA_VIGENTE", "MONEDA",
+            "TARIFA_USD", "LOCATION", "TIMESTAMP"]
+    wb = Workbook()
+    hoja = wb.active
+    hoja.title = "TARIFAS_VIGENTES"
+    hoja.append(cols)
+    for c in hoja[1]:
+        c.font = Font(bold=True)
+    for fila in filas_salida:
+        hoja.append([fila.get(c, "") for c in cols])
+    for i, c in enumerate(cols, start=1):
+        hoja.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
+    wb.save(OUTPUT_XLSX)
+    print(f"\n✅ {len(filas_salida)} filas escritas en {OUTPUT_XLSX}")
 
 
 if __name__ == "__main__":

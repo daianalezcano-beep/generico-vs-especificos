@@ -31,9 +31,12 @@ de la validación contra datos reales.
 - `extraccion_tarifas_vigentes.py` — extracción de tarifa vigente por
   código (Fase 1), Selenium contra Tourplan NX. No necesita CSV/Excel de
   entrada — busca los códigos él mismo en Tourplan. Editar `USERNAME`,
-  `PASSWORD`, `COMPARACIONES` y `TIPO_CAMBIO_ARS_USD` (todo al principio
-  del archivo) antes de correr. `MOSTRAR_CAPTURAS=True` muestra las
-  capturas inline si se corre en Colab/Jupyter (opcional).
+  `PASSWORD`, `COMPARACIONES`, `TIPO_CAMBIO_ARS_USD`,
+  `PERIODO_ANALISIS_DESDE/HASTA` y `PRICE_CODE_DEFAULT` (todo al
+  principio del archivo) antes de correr. `MOSTRAR_CAPTURAS=True`
+  muestra las capturas inline si se corre en Colab/Jupyter (opcional).
+  Salida: `tarifas_vigentes.xlsx` (una fila por código + período + rango
+  de pax).
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
   por location/categoría/guía (editable, sin hardcodear en código).
 - `muestras/` — 3 Product List reales (TRFPO + 2 transportistas, BUE)

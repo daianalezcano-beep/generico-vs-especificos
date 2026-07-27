@@ -68,6 +68,53 @@ la celda de código de la celda de descripción en la grilla de
 resultados, y su detección de paginación, son las que más probablemente
 necesiten ajuste contra el DOM real.
 
+## Períodos y Price Code
+
+**Hallazgo real de la primera corrida**: abrir RATES no muestra
+directamente la grilla de tarifas — muestra primero una LISTA de
+períodos (cada uno con su rango de fechas), y hay que abrir el período
+correcto con un clic antes de llegar a la grilla con la columna COST.
+El diseño original asumía (sin confirmar) que la grilla aparecía
+directa; no era así.
+
+Para esto se reusan, tal cual, las funciones que
+`tourplan_valorizacion_pkg_v3.py` ya tenía resueltas y confirmadas
+contra Tourplan real para este mismo problema (se ocupa de leer/abrir
+períodos al escribir rates de servicios madre): `_leer_periodos`
+(selectores `td.tpcol-rateperiod` para la fecha del período y
+`td.tpcol-pricecodecode` para su price code) y `_seleccionar_price_code`
+(radio `#priceCodeModeSelected` + combo `#priceCode`, para pasar de la
+vista agregada "All Price Codes" a un price code puntual).
+
+**Por qué filtrar por Price Code, no sólo por fecha**: el hallazgo más
+importante de esa función hermana es que la vista "All Price Codes"
+(la que se ve por default) es una vista AGREGADA — lo que se lee ahí
+puede no ser el valor persistido, y en el caso del script hermano se
+leía **0.0 sin ningún error visible**. Por eso `PRICE_CODE_DEFAULT =
+"TR"` filtra a un price code concreto antes de leer, en vez de confiar
+en la vista default. Si en la corrida real los períodos de estos
+supplier no tienen price codes separados (todo "Unassigned"/"ALL"),
+poner `PRICE_CODE_DEFAULT = "ALL"` para desactivar el filtro sin que
+rompa nada.
+
+**Rango de análisis**: `PERIODO_ANALISIS_DESDE`/`PERIODO_ANALISIS_HASTA`
+(ninguno de los dos existía en el diseño original — se agregaron a
+pedido de la usuaria) definen qué períodos procesar: se toman TODOS los
+que se superponen con ese rango, no sólo uno — un código puede tener
+más de un período cargado dentro del rango pedido, y cada uno queda
+como fila(s) separada(s) en la salida (columnas `PERIODO_DESDE`,
+`PERIODO_HASTA`, `PRICE_CODE`). Si ambos quedan en `None`, el rango es
+"hoy" (un solo día) — o sea, sólo el período vigente en este momento.
+
+**Sin confirmar todavía**: si después de abrir un período hace falta
+algo más que `_seleccionar_price_code` para que la grilla persistida
+se muestre (el script hermano lo hace sobre un servicio madre/PCM, no
+sobre un componente suelto — puede haber diferencias de UI); y si
+`listar_codigos_supplier`/`buscar_producto` dejan al producto
+realmente "en contexto" antes de este paso (si RATES muestra la lista
+de períodos de OTRO producto por error, sería un síntoma de eso, no de
+esta parte).
+
 ## Moneda
 
 Confirmado por la usuaria: cada período de la grilla RATES tiene
