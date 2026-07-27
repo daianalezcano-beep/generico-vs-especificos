@@ -4,6 +4,64 @@ Ver `BRIEF.md` para el pedido de negocio completo. Este documento registra
 las decisiones de diseño tomadas durante la construcción (algunas
 ajustan/precisan lo que dice `BRIEF.md` a partir de datos reales).
 
+## Estado al 2026-07-27 — resumen para retomar
+
+**Fase 2 (matching)**: terminada y validada contra los 3 Product List
+reales de `muestras/` (`python test_matching.py`). No tiene pendientes
+abiertos.
+
+**Fase 1 (extracción, `extraccion_tarifas_vigentes.py`)**: en corridas
+reales contra Tourplan Test, no simulada. Bugs reales encontrados y ya
+corregidos en el código (quedan documentados más abajo en este archivo,
+sección por sección):
+1. Colab no trae Chrome preinstalado → se agregó detección/instalación
+   automática (`_find_chrome`/`_instalar_chrome`).
+2. La heurística de columnas de `listar_codigos_supplier` confundía la
+   celda de Location ("BUE") con la de Code → se pasó a identificar la
+   columna por header ("Code") en vez de por forma del texto.
+3. Abrir RATES no muestra la grilla de tarifas directo — muestra antes
+   una lista de períodos → se agregó navegación de períodos
+   (`_leer_periodos_rates`, `_periodos_en_rango`), con filtro configurable
+   por rango de fechas (`PERIODO_ANALISIS_DESDE/HASTA`) y por Price Code
+   (`PRICE_CODE_DEFAULT`, para evitar leer la vista agregada "All Price
+   Codes" que puede devolver 0.0 sin avisar).
+4. La moneda no está en la grilla de un período ya abierto (headers
+   reales: `"USD\nGROUP COST"`, embebida en el texto) → se movió la
+   lectura a la lista de períodos (misma fila que fecha/price code).
+
+**Último archivo de resultados real recibido** (corrida ANTERIOR al fix
+#4 de moneda, con `LIMIT_PRUEBA=5`): sólo trajo códigos de TRFPO (4
+códigos × 7 rangos de pax = 28 filas) — es esperado, no un bug: con
+`LIMIT_PRUEBA` bajo, la cola se agota dentro del primer supplier
+(genérico) antes de llegar a los transportistas, porque
+`descubrir_cola` procesa "generico" primero y recién después cada
+transportista de la lista. `MONEDA`/`TARIFA_USD` vinieron vacíos en ese
+archivo — esperado también, es la corrida de antes del fix #4.
+
+Dato a confirmar en la próxima corrida (no es un bug de código, es un
+hallazgo de datos): en las 4 códigos de esa corrida, el rango de pax
+36-41 vino sin valor (`None`) y el rango 42-9999 vino en `0` — igual en
+los 4 códigos, así que puede ser que esos tramos de bus grande
+realmente no tengan tarifa cargada para este período en TRFPO. Revisar
+directamente en Tourplan si tiene sentido, no asumir que es un error de
+lectura.
+
+**Fase 1 NO compara nada contra el transportista específico** — sólo
+extrae la tarifa de cada código, sea TRFPO o transportista, en filas
+separadas. Cruzar "este código de transportista corresponde a este
+código TRFPO, ¿cuánto difieren?" es exactamente el trabajo de Fase 3
+(comparación de gap), que todavía no se construyó — necesita juntar la
+salida de Fase 2 (`matching_engine.py`, quién matchea con quién) con la
+salida de Fase 1 (`tarifas_vigentes.xlsx`, cuánto vale cada uno).
+
+**Para la próxima corrida**: subir o quitar `LIMIT_PRUEBA` para que la
+cola llegue a los transportistas y no sólo a TRFPO, y confirmar que
+`MONEDA`/`TARIFA_USD` ya salen bien con el fix de períodos.
+
+**Pendiente sin empezar**: Fase 3 (comparación de gap, usando
+`config/tabla_bases_vehiculo_pax.csv` para el join por vehículo/pax) y
+Fase 4 (Excel de salida final, con formato/resaltado de diferencias).
+
 ## Alcance de esta primera entrega
 
 Fase 1 (extracción de tarifas vigentes) + Fase 2 (motor de matching) +
