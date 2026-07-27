@@ -44,13 +44,30 @@ sin PCM, sin USED IN, sin subcode, sin loop de períodos histórico — sólo
 la tarifa vigente por rango de pax de cada código, para TRFPO y cada
 transportista.
 
+**Sin CSV/Excel de entrada**: a diferencia de los scripts hermanos (que
+leen una lista de trabajo desde un Excel armado a mano, columna
+PRODUCTOS), este script no necesita que se le arme ninguna lista de
+códigos. `listar_codigos_supplier` — nueva, no viene de ningún script
+hermano — reusa el llenado de filtros de `buscar_producto` pero deja el
+campo Código vacío y lee TODA la grilla de resultados (código +
+descripción de cada fila) en vez de abrir un único producto puntual.
+Con eso, `descubrir_cola` recorre `COMPARACIONES` (Location + Supplier
+genérico + lista de transportistas, editado directamente en el script)
+y construye la cola de trabajo completa preguntándole a Tourplan mismo
+qué códigos existen — no hace falta exportar el Product List de nadie
+de antemano.
+
 **Sin verificar contra Tourplan real todavía** — a diferencia de los
 scripts hermanos (que ya corrieron y se depuraron contra Tourplan Test
 varias veces, ver sus HISTORIAL/README), este script recién adaptado no
 tiene una corrida real encima. Es esperable que la primera corrida real
 encuentre ajustes de selector necesarios (mismo patrón que documentan
 los hermanos) — no tomar el código como validado hasta esa primera
-corrida.
+corrida. `listar_codigos_supplier` es la parte con menos precedente (no
+viene adaptada de ningún script hermano): su heurística para distinguir
+la celda de código de la celda de descripción en la grilla de
+resultados, y su detección de paginación, son las que más probablemente
+necesiten ajuste contra el DOM real.
 
 ## Moneda
 

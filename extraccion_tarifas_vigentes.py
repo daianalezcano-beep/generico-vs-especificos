@@ -17,9 +17,20 @@
 #   nada de eso aplica: acá sólo se lee la tarifa vigente tal como está
 #   cargada en el propio componente, sin simular nada).
 #
+#   SIN CSV/EXCEL DE ENTRADA: no hace falta exportar nada de Tourplan
+#   antes de correr. Se edita COMPARACIONES (más abajo) con Location +
+#   Supplier genérico + Supplier(es) transportista, y el script busca
+#   él mismo, en Tourplan, todos los códigos vigentes de cada supplier
+#   (listar_codigos_supplier) y les lee la tarifa.
+#
 #   ⚠ SIN VERIFICAR CONTRA TOURPLAN REAL TODAVÍA — ver DISENO.md.
 #   Es esperable ajustar selectores en la primera corrida real, igual
-#   que documentan los scripts hermanos en su propio historial.
+#   que documentan los scripts hermanos en su propio historial. La
+#   función de listado (listar_codigos_supplier) es la más nueva de
+#   todas — ninguno de los dos scripts hermanos hace algo parecido, así
+#   que su heurística de columnas (código vs. descripción) y su
+#   detección de paginación son las que más probablemente necesiten
+#   ajuste.
 # ============================================================
 
 import os, sys, subprocess, importlib, time, re, csv
@@ -50,14 +61,18 @@ USERNAME   = "poner minusculas"
 PASSWORD   = "password"
 BASE_URL   = "https://tourplannx.eurotur.com.ar/TourplanNX_Test"
 
-# Cola de entrada: uno o más Product List export de TP (Loc,Serv,
-# Supplier,SupplierName,Code,Description,Comment,Used,Deleted) — el
-# mismo formato que ya usa el motor de matching (matching_engine.py).
-# Se puede pasar el de TRFPO + el de cada transportista a comparar.
-PRODUCT_LIST_CSVS = [
-    "muestras/Product_List_TRFPO.csv",
-    "muestras/Product_List_TurismoElPuente_1TEP01.csv",
-    "muestras/Product_List_HousemanCars_6HOUS1.csv",
+# Qué comparar — se edita directamente ACÁ, no hace falta exportar ni
+# armar ningún CSV/Excel de entrada. Por cada entrada, el script busca
+# en Tourplan (Product Search, Location + Supplier + Service Type, sin
+# código) TODOS los códigos vigentes de "generico" y de cada supplier
+# en "transportistas", y les lee la tarifa — ver listar_codigos_supplier.
+COMPARACIONES = [
+    {
+        "location": "BUE",
+        "service_type": "TR",
+        "generico": "TRFPO",
+        "transportistas": ["1TEP01", "6HOUS1"],
+    },
 ]
 OUTPUT_CSV = "tarifas_vigentes.csv"
 SS_DIR     = "screenshots"
@@ -229,17 +244,14 @@ class ProductoNoEncontrado(Exception):
     pass
 
 
-def buscar_producto(driver, location, supplier, codigo, service_type=None):
-    """Busca Location/Supplier/Code(/ServiceType) en Product Search,
-    abre el resultado y confirma que quedó en contexto de producto
-    (menú con RATES/UTILITIES/etc.). Adaptado tal cual de
+def _completar_filtros_busqueda(driver, location, supplier, codigo, service_type):
+    """Navega a Product Search y completa Location/Supplier/Code(/Service
+    Type) — todo lo que buscar_producto y listar_codigos_supplier
+    necesitan en común, antes de divergir en qué hacer con el
+    resultado (abrir un producto puntual vs. leer todos los códigos de
+    la grilla). Adaptado tal cual de
     cbd_impact_simulator_pkg.py::buscar_producto — ver DISENO.md."""
-    codigo = str(codigo).strip() if codigo not in (None, "") else ""
-    location = str(location).strip() if location not in (None, "") else ""
-    supplier = str(supplier).strip() if supplier not in (None, "") else ""
     st_upper = (service_type or "").strip().upper()
-    print(f"\n  📦 Buscando: {location}/{supplier}/{codigo}"
-          f"{('/' + st_upper) if st_upper else ''}")
 
     driver.get(f"{BASE_URL}/#/home")
     time.sleep(2 * VELOCIDAD)
@@ -341,6 +353,20 @@ def buscar_producto(driver, location, supplier, codigo, service_type=None):
     jc(driver, btn_search)
     time.sleep(6 * VELOCIDAD)
 
+
+def buscar_producto(driver, location, supplier, codigo, service_type=None):
+    """Busca Location/Supplier/Code(/ServiceType) en Product Search,
+    abre el resultado y confirma que quedó en contexto de producto
+    (menú con RATES/UTILITIES/etc.)."""
+    codigo = str(codigo).strip() if codigo not in (None, "") else ""
+    location = str(location).strip() if location not in (None, "") else ""
+    supplier = str(supplier).strip() if supplier not in (None, "") else ""
+    st_upper = (service_type or "").strip().upper()
+    print(f"\n  📦 Buscando: {location}/{supplier}/{codigo}"
+          f"{('/' + st_upper) if st_upper else ''}")
+
+    _completar_filtros_busqueda(driver, location, supplier, codigo, service_type)
+
     def _en_contexto_producto():
         try:
             img = WebDriverWait(driver, 4).until(
@@ -404,6 +430,55 @@ def buscar_producto(driver, location, supplier, codigo, service_type=None):
         raise ProductoNoEncontrado(
             f"Click en resultado OK pero no quedó en contexto de producto "
             f"(menú visto: {menu_items}) — codigo={codigo!r}")
+
+
+def listar_codigos_supplier(driver, location, supplier, service_type=None):
+    """Busca Location/Supplier(/ServiceType) en Product Search SIN
+    código (deja ese campo vacío) y devuelve TODOS los resultados de la
+    grilla como lista de {codigo, descripcion} — a diferencia de
+    buscar_producto, que abre un único resultado puntual. Es lo que le
+    permite a este script no necesitar ningún CSV/Excel de entrada: le
+    alcanza con (location, supplier) — ver COMPARACIONES.
+
+    ⚠ Heurística de columnas SIN CONFIRMAR contra una grilla real
+    (código = celda corta alfanumérica en mayúsculas, descripción =
+    la celda de texto más larga de la fila) — si en la corrida real
+    devuelve basura, revisar el screenshot/dump y ajustar el regex.
+    Tampoco maneja paginación todavía: si la grilla pagina resultados
+    sólo se lee la página visible y se avisa por consola."""
+    location = str(location).strip() if location not in (None, "") else ""
+    supplier = str(supplier).strip() if supplier not in (None, "") else ""
+    print(f"\n  📋 Listando códigos: {location}/{supplier}"
+          f"{('/' + service_type.upper()) if service_type else ''}")
+
+    _completar_filtros_busqueda(driver, location, supplier, "", service_type)
+    ss(driver, f"listado_{supplier[:15]}")
+
+    resultado = driver.execute_script(r"""
+        var rows = Array.from(document.querySelectorAll('table tbody tr'));
+        var out = rows.map(function(tr){
+            var tds = Array.from(tr.querySelectorAll('td'))
+                .filter(function(td){ return td.children.length === 0; });
+            var textos = tds.map(function(td){ return td.innerText.trim(); }).filter(Boolean);
+            if (!textos.length) return null;
+            var codigo = textos.find(function(t){ return /^[A-Z0-9]{2,10}$/.test(t); }) || '';
+            var descripcion = textos.reduce(function(a, b){ return b.length > a.length ? b : a; }, '');
+            return {codigo: codigo, descripcion: descripcion};
+        }).filter(function(r){ return r && r.codigo; });
+        var paginado = !!document.querySelector("[class*='pagin' i], [class*='pager' i]");
+        return {items: out, paginado: paginado, total_filas: rows.length};
+    """)
+
+    if not resultado or not resultado.get("items"):
+        dump(driver, f"listado_vacio_{supplier[:15]}")
+        print(f"    ⚠ No encontré resultados para {location}/{supplier}")
+        return []
+    if resultado.get("paginado"):
+        print(f"    ⚠ La grilla parece tener paginación (detecté un elemento con "
+              f"clase 'pagin'/'pager') — sólo se leyó la página visible "
+              f"({len(resultado['items'])} códigos). Revisar {SS_DIR}/listado_{supplier[:15]}*.png")
+    print(f"    → {len(resultado['items'])} códigos encontrados")
+    return resultado["items"]
 
 
 # ── Lectura de la grilla RATES del componente (REUTILIZADO de
@@ -499,23 +574,27 @@ def leer_tarifa_vigente_componente(driver, codigo):
 
 # ── Cola de trabajo y moneda ─────────────────────────────────────────
 
-def leer_cola_desde_product_lists(paths):
-    """Junta los Product List CSV (Loc,Serv,Supplier,SupplierName,Code,
-    Description,Comment,Used,Deleted) en la cola de trabajo — un
-    (LOCATION, SUPPLIER, CODE, SERVICE_TYPE) por fila, saltando
-    Deleted=Y. SERVICE_TYPE se toma de la columna Serv del propio CSV
-    (ej. "TR")."""
+def descubrir_cola(driver, comparaciones):
+    """A partir de COMPARACIONES (location + supplier genérico + lista
+    de transportistas), busca en Tourplan los códigos vigentes de cada
+    supplier (listar_codigos_supplier) y devuelve la cola de trabajo
+    completa — un (LOCATION, SUPPLIER, CODIGO, SERVICE_TYPE, ES_GENERICO)
+    por código encontrado. Requiere sesión ya logueada."""
     cola = []
-    for path in paths:
-        with open(path, newline="", encoding="utf-8-sig") as f:
-            for fila in csv.DictReader(f):
-                if (fila.get("Deleted") or "").strip().upper() == "Y":
-                    continue
+    for comp in comparaciones:
+        location = comp["location"]
+        service_type = comp.get("service_type", "")
+        suppliers = [(comp["generico"], True)] + [(s, False) for s in comp.get("transportistas", [])]
+        for supplier, es_generico in suppliers:
+            items = listar_codigos_supplier(driver, location, supplier, service_type)
+            for item in items:
                 cola.append({
-                    "location": (fila.get("Loc") or "").strip(),
-                    "supplier": (fila.get("Supplier") or "").strip(),
-                    "codigo": (fila.get("Code") or "").strip(),
-                    "service_type": (fila.get("Serv") or "").strip(),
+                    "location": location,
+                    "supplier": supplier,
+                    "codigo": item["codigo"],
+                    "descripcion": item.get("descripcion", ""),
+                    "service_type": service_type,
+                    "es_generico": es_generico,
                 })
     return cola
 
@@ -551,22 +630,24 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
 # ── Main ──────────────────────────────────────────────────────────
 
 def main():
-    cola = leer_cola_desde_product_lists(PRODUCT_LIST_CSVS)
-    if LIMIT_PRUEBA:
-        print(f"⚠ LIMIT_PRUEBA={LIMIT_PRUEBA} — procesando sólo los primeros "
-              f"{LIMIT_PRUEBA} códigos de {len(cola)}. Poner LIMIT_PRUEBA=0 "
-              f"para correr la cola completa.")
-        cola = cola[:LIMIT_PRUEBA]
     tipo_cambio = cargar_tipo_cambio(TIPO_CAMBIO_CSV)
     if tipo_cambio is None:
         print(f"⚠ Sin TIPO_CAMBIO_ARS_USD cargado en {TIPO_CAMBIO_CSV} — "
               f"las filas en ARS quedarán sin TARIFA_USD hasta completarlo.")
-    print(f"Cola de trabajo: {len(cola)} códigos a leer.")
 
     driver = crear_driver()
     filas_salida = []
     try:
         login(driver)
+
+        cola = descubrir_cola(driver, COMPARACIONES)
+        if LIMIT_PRUEBA:
+            print(f"\n⚠ LIMIT_PRUEBA={LIMIT_PRUEBA} — procesando sólo los primeros "
+                  f"{LIMIT_PRUEBA} códigos de {len(cola)} descubiertos. Poner "
+                  f"LIMIT_PRUEBA=0 para correr la cola completa.")
+            cola = cola[:LIMIT_PRUEBA]
+        print(f"Cola de trabajo: {len(cola)} códigos a leer.")
+
         for i, item in enumerate(cola):
             print(f"\n[{i+1}/{len(cola)}] {item['supplier']}/{item['codigo']}")
             try:
@@ -583,6 +664,7 @@ def main():
                     filas_salida.append({
                         "SUPPLIER": item["supplier"],
                         "PRODUCT_CODE": item["codigo"],
+                        "ES_GENERICO": item["es_generico"],
                         "PAX_DESDE": t["pax_desde"],
                         "PAX_HASTA": t["pax_hasta"],
                         "TARIFA_VIGENTE": t["tarifa"],
@@ -600,7 +682,7 @@ def main():
         driver.quit()
 
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
-        cols = ["SUPPLIER", "PRODUCT_CODE", "PAX_DESDE", "PAX_HASTA",
+        cols = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PAX_DESDE", "PAX_HASTA",
                 "TARIFA_VIGENTE", "MONEDA", "TARIFA_USD", "LOCATION", "TIMESTAMP"]
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()

@@ -29,8 +29,9 @@ de la validación contra datos reales.
 - `matching_engine.py` — motor de matching (Fase 2), puro pandas/regex.
 - `test_matching.py` — corrida de validación contra `muestras/`.
 - `extraccion_tarifas_vigentes.py` — extracción de tarifa vigente por
-  código (Fase 1), Selenium contra Tourplan NX. Editar `USERNAME`,
-  `PASSWORD` y `PRODUCT_LIST_CSVS` antes de correr.
+  código (Fase 1), Selenium contra Tourplan NX. No necesita CSV/Excel de
+  entrada — busca los códigos él mismo en Tourplan. Editar `USERNAME`,
+  `PASSWORD` y `COMPARACIONES` antes de correr.
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
   por location/categoría/guía (editable, sin hardcodear en código).
 - `config/tipo_cambio.csv` — tipo de cambio ARS→USD a aplicar sobre las
