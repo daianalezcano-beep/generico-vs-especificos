@@ -63,10 +63,12 @@ OUTPUT_CSV = "tarifas_vigentes.csv"
 SS_DIR     = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
 
-# Config de moneda por Supplier (ver config/transportistas_moneda.csv,
-# DISENO.md sección "Moneda"). MONEDA sale de acá — no hay scrape de
-# moneda todavía porque no hay ningún campo confirmado en pantalla.
-MONEDA_CONFIG_CSV = "config/transportistas_moneda.csv"
+# Tipo de cambio ARS→USD a aplicar sobre las filas cuya moneda leída en
+# RATES (columna BUY/SELL CURRENCY) sea ARS — dato manual, cargado por
+# la usuaria antes de correr (ver config/tipo_cambio.csv, DISENO.md
+# sección "Moneda"). La moneda en sí NO se configura a mano: se lee por
+# línea directamente de Tourplan.
+TIPO_CAMBIO_CSV = "config/tipo_cambio.csv"
 
 VELOCIDAD = 1.0  # multiplicador de todos los time.sleep — subir si la red es lenta
 
@@ -423,11 +425,18 @@ def _leer_tabla_rates(driver):
 def leer_tarifa_vigente_componente(driver, codigo):
     """Abre el tab RATES del producto ya en contexto (ver
     buscar_producto) y devuelve una lista de {pax_desde, pax_hasta,
-    tarifa} — sólo filas de rango de pax adulto (AD), igual criterio
-    que _extraer_valores_ad. NO recorre históricos de período — lee la
-    grilla tal como aparece por defecto (se asume que Tourplan muestra
-    ahí la tarifa vigente; sin confirmar contra una corrida real con
-    más de un período cargado — ver DISENO.md)."""
+    tarifa, moneda} — sólo filas de rango de pax adulto (AD), igual
+    criterio que _extraer_valores_ad. NO recorre históricos de período —
+    lee la grilla tal como aparece por defecto (se asume que Tourplan
+    muestra ahí la tarifa vigente; sin confirmar contra una corrida real
+    con más de un período cargado — ver DISENO.md).
+
+    Moneda: cada período de Rates tiene columnas BUY CURRENCY y SELL
+    CURRENCY, por defecto cargadas iguales — confirmado por la usuaria,
+    así que alcanza con leer una (se prioriza BUY si ambas existen). No
+    hay fallback a config manual: si esta columna no aparece en la
+    grilla real, la fila queda con moneda vacía y se avisa (ver
+    DISENO.md), en vez de asumir una moneda por transportista."""
     hamburger(driver)
     menu_item(driver, "RATES")
     time.sleep(3 * VELOCIDAD)
@@ -443,7 +452,15 @@ def leer_tarifa_vigente_componente(driver, codigo):
     idx_svc = next((i for i, h in enumerate(headers) if "SERVICE" in h.upper()), 0)
     idx_cost = next((i for i, h in enumerate(headers)
                       if "GROUP COST" in h.upper() and "FIT" not in h.upper()), 1)
+    idx_ccy = next((i for i, h in enumerate(headers)
+                     if "BUY" in h.upper() and "CURRENC" in h.upper()), None)
+    if idx_ccy is None:
+        idx_ccy = next((i for i, h in enumerate(headers) if "CURRENC" in h.upper()), None)
     pat_rango = re.compile(r'(\d+)\s*[-–]\s*(\d+)')
+
+    if idx_ccy is None:
+        print(f"    ⚠ No encontré columna de moneda (BUY/SELL CURRENCY) en RATES "
+              f"para {codigo} — headers: {headers}")
 
     out = []
     for row in tabla["rows"]:
@@ -462,10 +479,12 @@ def leer_tarifa_vigente_componente(driver, codigo):
             valor = float(str(raw).replace(",", ".").replace("$", "").strip())
         except Exception:
             valor = None
+        moneda = celdas[idx_ccy].strip().upper() if (idx_ccy is not None and idx_ccy < len(celdas)) else ""
         out.append({
             "pax_desde": int(m.group(1)),
             "pax_hasta": int(m.group(2)),
             "tarifa": valor,
+            "moneda": moneda,
         })
     return out
 
@@ -493,21 +512,42 @@ def leer_cola_desde_product_lists(paths):
     return cola
 
 
-def cargar_moneda_config(path):
-    """SUPPLIER -> MONEDA, desde config/transportistas_moneda.csv (ver
-    DISENO.md sección Moneda — manual, no scrapeado)."""
-    out = {}
+def cargar_tipo_cambio(path):
+    """Tipo de cambio ARS→USD dado a mano (ver config/tipo_cambio.csv,
+    DISENO.md sección Moneda). Un único valor — no varía por
+    transportista, a diferencia de la moneda (que sí se lee por línea
+    directamente de Tourplan, ver leer_tarifa_vigente_componente)."""
     with open(path, newline="", encoding="utf-8-sig") as f:
-        for fila in csv.DictReader(f):
-            out[(fila.get("SUPPLIER") or "").strip()] = (fila.get("MONEDA") or "").strip()
-    return out
+        fila = next(csv.DictReader(f), None)
+    valor = (fila or {}).get("TIPO_CAMBIO_ARS_USD", "").strip()
+    if not valor:
+        return None
+    return float(valor.replace(",", "."))
+
+
+def convertir_a_usd(tarifa, moneda, tipo_cambio):
+    """None si no se puede convertir con confianza: falta la tarifa,
+    la moneda vino vacía (columna CURRENCY no encontrada), la moneda no
+    es ARS ni USD, o es ARS pero no hay tipo de cambio cargado — mejor
+    dejar el dato en blanco para revisión manual que inventar un
+    valor."""
+    if tarifa is None or not moneda:
+        return None
+    if moneda == "USD":
+        return tarifa
+    if moneda == "ARS":
+        return tarifa / tipo_cambio if tipo_cambio else None
+    return None
 
 
 # ── Main ──────────────────────────────────────────────────────────
 
 def main():
     cola = leer_cola_desde_product_lists(PRODUCT_LIST_CSVS)
-    moneda_por_supplier = cargar_moneda_config(MONEDA_CONFIG_CSV)
+    tipo_cambio = cargar_tipo_cambio(TIPO_CAMBIO_CSV)
+    if tipo_cambio is None:
+        print(f"⚠ Sin TIPO_CAMBIO_ARS_USD cargado en {TIPO_CAMBIO_CSV} — "
+              f"las filas en ARS quedarán sin TARIFA_USD hasta completarlo.")
     print(f"Cola de trabajo: {len(cola)} códigos a leer.")
 
     driver = crear_driver()
@@ -522,18 +562,19 @@ def main():
                 tarifas = leer_tarifa_vigente_componente(driver, item["codigo"])
                 if not tarifas:
                     print(f"    ⚠ Sin tarifas leídas para {item['codigo']}")
-                moneda = moneda_por_supplier.get(item["supplier"], "")
-                if not moneda:
-                    print(f"    ⚠ Sin MONEDA configurada para supplier "
-                          f"{item['supplier']!r} — completar en {MONEDA_CONFIG_CSV}")
                 for t in tarifas:
+                    if t["moneda"] not in ("ARS", "USD"):
+                        print(f"    ⚠ Moneda inesperada {t['moneda']!r} en "
+                              f"{item['codigo']} (pax {t['pax_desde']}-{t['pax_hasta']})"
+                              f" — no se convierte a USD")
                     filas_salida.append({
                         "SUPPLIER": item["supplier"],
                         "PRODUCT_CODE": item["codigo"],
                         "PAX_DESDE": t["pax_desde"],
                         "PAX_HASTA": t["pax_hasta"],
                         "TARIFA_VIGENTE": t["tarifa"],
-                        "MONEDA": moneda,
+                        "MONEDA": t["moneda"],
+                        "TARIFA_USD": convertir_a_usd(t["tarifa"], t["moneda"], tipo_cambio),
                         "LOCATION": item["location"],
                         "TIMESTAMP": datetime.now().isoformat(timespec="seconds"),
                     })
@@ -547,7 +588,7 @@ def main():
 
     with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as f:
         cols = ["SUPPLIER", "PRODUCT_CODE", "PAX_DESDE", "PAX_HASTA",
-                "TARIFA_VIGENTE", "MONEDA", "LOCATION", "TIMESTAMP"]
+                "TARIFA_VIGENTE", "MONEDA", "TARIFA_USD", "LOCATION", "TIMESTAMP"]
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         w.writerows(filas_salida)

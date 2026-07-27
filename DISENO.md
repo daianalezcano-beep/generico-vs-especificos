@@ -10,8 +10,8 @@ Fase 1 (extracción de tarifas vigentes) + Fase 2 (motor de matching) +
 capa de conversión de moneda. Fase 3 (comparación de gap) y Fase 4
 (salida Excel) quedan para una siguiente entrega — los archivos de
 config de esta entrega (`tabla_bases_vehiculo_pax.csv`,
-`transportistas_moneda.csv`) ya están armados para que Fase 3 los
-consuma sin cambios de esquema.
+`tipo_cambio.csv`) ya están armados para que Fase 3 los consuma sin
+cambios de esquema.
 
 ## Reuso de las herramientas hermanas
 
@@ -52,28 +52,36 @@ encuentre ajustes de selector necesarios (mismo patrón que documentan
 los hermanos) — no tomar el código como validado hasta esa primera
 corrida.
 
-## Moneda: gap real encontrado, no resuelto por ninguna herramienta hermana
+## Moneda
 
-Ninguno de los dos scripts hermanos lee moneda en ningún punto: ambos
-asumen (y en el caso de `cbd-impact-simulator-pkg`, está confirmado por
-captura real) que el valor de GROUP COST que devuelve Tourplan ya está
-en USD. Eso es cierto para las pantallas que esos scripts leen — pero no
-hay ninguna confirmación de que el GROUP COST de un código de
-transportista cargado en ARS se muestre igual (ya convertido) en su
-propia grilla de RATES component-level. Mientras no se confirme un campo
-de moneda visible en esa pantalla, `MONEDA` se resuelve por config
-manual (`config/transportistas_moneda.csv`, un valor por Supplier — ver
-brief original del usuario: "muchas veces los tarifarios de los
-transportistas están en ARS mientras que el TRFPO está en USD"),
-editable sin tocar código. `TIPO_CAMBIO_ARS_USD` en ese mismo CSV queda
-vacío a propósito — se completa a mano antes de correr Fase 3, igual que
-el subcode de prueba del simulador hermano (un valor cargado por la
-usuaria, no buscado automáticamente).
+Confirmado por la usuaria: cada período de la grilla RATES tiene
+columnas **BUY CURRENCY** y **SELL CURRENCY**, cargadas iguales por
+default — alcanza con leer una (`leer_tarifa_vigente_componente`
+prioriza BUY, cae a SELL si no encuentra columna con "BUY" en el
+header). Es distinto de lo que hacen los scripts hermanos: ninguno de
+los dos lee moneda en ningún punto — `tourplan_valorizacion_pkg_v3.py`
+no la necesita (copia markup, no valores) y `cbd_impact_simulator_pkg.py`
+asume (confirmado por captura real en ese contexto) que el GROUP COST ya
+está en USD. Acá la moneda SÍ puede variar por transportista (brief
+original: "muchas veces los tarifarios de los transportistas están en
+ARS mientras que el TRFPO está en USD"), así que se lee por línea en
+vez de asumirse.
 
-Si en algún momento se confirma un campo de moneda visible en la
-pantalla de Rates del componente (o en otra pantalla del producto), se
-puede agregar como scrape real y usar el valor de config sólo como
-fallback — pendiente de confirmación, no implementado todavía.
+Conversión: sólo se completa `TARIFA_USD` cuando la moneda leída es
+`USD` (se copia tal cual) o `ARS` (se divide por `TIPO_CAMBIO_ARS_USD`,
+`config/tipo_cambio.csv` — un único valor dado a mano por la usuaria,
+no buscado automáticamente, igual que el subcode de prueba del
+simulador hermano). Si la moneda es ARS pero no hay tipo de cambio
+cargado, o si la columna de moneda no se encuentra en la grilla real
+(headers no confirmados todavía contra Tourplan — ver más abajo),
+`TARIFA_USD` queda vacío en vez de inventar un valor, y el script avisa
+por consola para que se complete/revise a mano.
+
+Sin confirmar todavía: el texto exacto del header en el DOM (¿dice
+literalmente "BUY CURRENCY" o alguna variante como "Buy Ccy"?) y si el
+valor de celda es el código ISO ("ARS"/"USD") o un nombre largo — ajustar
+`idx_ccy` en `leer_tarifa_vigente_componente` en la primera corrida real
+si no matchea.
 
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 

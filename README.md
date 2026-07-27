@@ -33,8 +33,10 @@ de la validación contra datos reales.
   `PASSWORD` y `PRODUCT_LIST_CSVS` antes de correr.
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
   por location/categoría/guía (editable, sin hardcodear en código).
-- `config/transportistas_moneda.csv` — moneda por transportista y tipo
-  de cambio ARS→USD a aplicar en Fase 3 (editable, ver DISENO.md).
+- `config/tipo_cambio.csv` — tipo de cambio ARS→USD a aplicar sobre las
+  filas cuya moneda (leída directamente de Tourplan, columna BUY/SELL
+  CURRENCY de RATES) sea ARS. Único dato manual de moneda — completar
+  antes de correr `extraccion_tarifas_vigentes.py` (ver DISENO.md).
 - `muestras/` — 3 Product List reales (TRFPO + 2 transportistas, BUE)
   usados para validar el matching.
 
