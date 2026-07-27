@@ -63,6 +63,14 @@ OUTPUT_CSV = "tarifas_vigentes.csv"
 SS_DIR     = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
 
+# Límite de códigos a procesar en esta corrida (0 = sin límite, procesa
+# toda la cola). Para la primera prueba contra Tourplan real conviene
+# un número chico (3-5) — así se valida que los selectores funcionan
+# sin quemar tiempo en los ~240 códigos de las muestras si algo falla
+# a mitad de camino. Mismo criterio que FASE2_LIMIT en
+# tourplan_valorizacion_pkg_v3.py.
+LIMIT_PRUEBA = 5
+
 # Tipo de cambio ARS→USD a aplicar sobre las filas cuya moneda leída en
 # RATES (columna BUY/SELL CURRENCY) sea ARS — dato manual, cargado por
 # la usuaria antes de correr (ver config/tipo_cambio.csv, DISENO.md
@@ -544,6 +552,11 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
 
 def main():
     cola = leer_cola_desde_product_lists(PRODUCT_LIST_CSVS)
+    if LIMIT_PRUEBA:
+        print(f"⚠ LIMIT_PRUEBA={LIMIT_PRUEBA} — procesando sólo los primeros "
+              f"{LIMIT_PRUEBA} códigos de {len(cola)}. Poner LIMIT_PRUEBA=0 "
+              f"para correr la cola completa.")
+        cola = cola[:LIMIT_PRUEBA]
     tipo_cambio = cargar_tipo_cambio(TIPO_CAMBIO_CSV)
     if tipo_cambio is None:
         print(f"⚠ Sin TIPO_CAMBIO_ARS_USD cargado en {TIPO_CAMBIO_CSV} — "
