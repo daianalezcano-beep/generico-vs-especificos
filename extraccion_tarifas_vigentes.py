@@ -768,17 +768,34 @@ def _seleccionar_price_code(driver, code, etiqueta=""):
 
 
 def _leer_periodos_rates(driver):
-    """Lista de {texto, desde, hasta, price_code} de la grilla de
-    RATES actualmente visible (lista de períodos, no el detalle de
+    """Lista de {texto, desde, hasta, price_code, moneda} de la grilla
+    de RATES actualmente visible (lista de períodos, no el detalle de
     uno). Cada fila trae la fecha en td.tpcol-rateperiod y su price
-    code en td.tpcol-pricecodecode (selectores reales confirmados)."""
+    code en td.tpcol-pricecodecode (selectores reales confirmados). La
+    moneda (Buy/Sell Currency, iguales por default — confirmado por la
+    usuaria) se lee ACÁ, en esta lista, y no de la grilla de un período
+    ya abierto: ahí la moneda viene embebida en el texto del header
+    (ej. "USD\\nGROUP COST"), que no es una fuente confiable en
+    general. Se busca la columna por header ("CURRENCY", prioridad a
+    "BUY") en la misma tabla que contiene los td.tpcol-rateperiod."""
     filas = driver.execute_script("""
+        var celda0 = document.querySelector('td.tpcol-rateperiod');
+        var tabla = celda0 ? celda0.closest('table') : null;
+        var headers = tabla ? Array.from(tabla.querySelectorAll('th')).map(function(h){
+            return h.innerText.trim();
+        }) : [];
+        var idxCcy = headers.findIndex(function(h){ return /BUY/i.test(h) && /CURR/i.test(h); });
+        if (idxCcy < 0) idxCcy = headers.findIndex(function(h){ return /CURR/i.test(h); });
+
         var out = [];
         document.querySelectorAll('td.tpcol-rateperiod').forEach(function(d){
             var tr = d.closest('tr');
             var p = tr ? tr.querySelector('td.tpcol-pricecodecode') : null;
+            var tds = tr ? Array.from(tr.querySelectorAll('td')) : [];
+            var moneda = (idxCcy >= 0 && tds[idxCcy]) ? tds[idxCcy].innerText.trim() : '';
             out.push({texto: (d.innerText||'').trim(),
-                      price_code: p ? (p.innerText||'').trim() : ''});
+                      price_code: p ? (p.innerText||'').trim() : '',
+                      moneda: moneda, headers: headers});
         });
         return out;
     """) or []
@@ -786,7 +803,10 @@ def _leer_periodos_rates(driver):
     for f in filas:
         desde, hasta = _parse_rate_period(f["texto"])
         out.append({"texto": f["texto"], "price_code": f["price_code"],
-                    "desde": desde, "hasta": hasta})
+                    "moneda": f["moneda"].strip().upper(), "desde": desde, "hasta": hasta})
+    if filas and not any(f["moneda"] for f in filas):
+        print(f"    ⚠ No encontré columna de moneda (BUY/SELL CURRENCY) en la lista "
+              f"de períodos — headers vistos: {filas[0].get('headers')}")
     return out
 
 
@@ -845,23 +865,37 @@ def _listar_tablas_pagina(driver):
     """)
 
 
-def _extraer_filas_ad(tabla, codigo):
+def _detectar_moneda_headers(headers):
+    """Fallback si la lista de períodos no trajo moneda: la grilla de
+    un período abierto la muestra embebida en el texto del header (ej.
+    "USD\\nGROUP COST") — no es la fuente principal (ver
+    _leer_periodos_rates) porque no se confirmó que sea confiable en
+    todos los casos, pero sirve de respaldo."""
+    for h in headers:
+        m = re.match(r'^([A-Z]{3})\b', h.strip())
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _extraer_filas_ad(tabla, codigo, moneda_periodo=""):
     """De una tabla ya leída con _leer_tabla_rates, devuelve las filas
     de rango de pax adulto (AD) como {pax_desde, pax_hasta, tarifa,
     moneda} — igual criterio que _extraer_valores_ad del script
-    hermano. No toca período/price code, eso lo maneja el llamador."""
+    hermano. La moneda se recibe del período (ver
+    _leer_periodos_rates) en vez de buscarse en esta grilla; sólo si
+    viene vacía se intenta el fallback de header. No toca
+    período/price code, eso lo maneja el llamador."""
     headers = tabla["headers"]
     idx_svc = next((i for i, h in enumerate(headers) if "SERVICE" in h.upper()), 0)
     idx_cost = next((i for i, h in enumerate(headers)
                       if "GROUP COST" in h.upper() and "FIT" not in h.upper()), 1)
-    idx_ccy = next((i for i, h in enumerate(headers)
-                     if "BUY" in h.upper() and "CURRENC" in h.upper()), None)
-    if idx_ccy is None:
-        idx_ccy = next((i for i, h in enumerate(headers) if "CURRENC" in h.upper()), None)
-    if idx_ccy is None:
-        print(f"    ⚠ No encontré columna de moneda (BUY/SELL CURRENCY) en RATES "
-              f"para {codigo} — headers: {headers}")
     pat_rango = re.compile(r'(\d+)\s*[-–]\s*(\d+)')
+
+    moneda = moneda_periodo or _detectar_moneda_headers(headers)
+    if not moneda:
+        print(f"    ⚠ No pude determinar la moneda de {codigo} (ni en la lista de "
+              f"períodos ni en los headers de la grilla) — headers: {headers}")
 
     out = []
     for row in tabla["rows"]:
@@ -880,7 +914,6 @@ def _extraer_filas_ad(tabla, codigo):
             valor = float(str(raw).replace(",", ".").replace("$", "").strip())
         except Exception:
             valor = None
-        moneda = celdas[idx_ccy].strip().upper() if (idx_ccy is not None and idx_ccy < len(celdas)) else ""
         out.append({
             "pax_desde": int(m.group(1)),
             "pax_hasta": int(m.group(2)),
@@ -971,7 +1004,7 @@ def leer_tarifa_vigente_componente(driver, codigo):
             print(f"      Tablas visibles en la página (headers): {tablas_vistas}")
             continue
 
-        for fila in _extraer_filas_ad(tabla, codigo):
+        for fila in _extraer_filas_ad(tabla, codigo, moneda_periodo=periodo.get("moneda", "")):
             fila["periodo_desde"] = periodo["desde"].strftime("%d/%m/%Y") if periodo["desde"] else ""
             fila["periodo_hasta"] = periodo["hasta"].strftime("%d/%m/%Y") if periodo["hasta"] else ""
             fila["price_code"] = periodo["price_code"]

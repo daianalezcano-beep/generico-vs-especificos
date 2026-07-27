@@ -117,15 +117,24 @@ esta parte).
 
 ## Moneda
 
-Confirmado por la usuaria: cada período de la grilla RATES tiene
-columnas **BUY CURRENCY** y **SELL CURRENCY**, cargadas iguales por
-default — alcanza con leer una (`leer_tarifa_vigente_componente`
-prioriza BUY, cae a SELL si no encuentra columna con "BUY" en el
-header). Es distinto de lo que hacen los scripts hermanos: ninguno de
-los dos lee moneda en ningún punto — `tourplan_valorizacion_pkg_v3.py`
-no la necesita (copia markup, no valores) y `cbd_impact_simulator_pkg.py`
-asume (confirmado por captura real en ese contexto) que el GROUP COST ya
-está en USD. Acá la moneda SÍ puede variar por transportista (brief
+Confirmado por la usuaria: hay columnas **BUY CURRENCY**/**SELL
+CURRENCY** (cargadas iguales por default, alcanza con leer una), pero
+**en la pantalla donde se listan todos los períodos** (`td.tpcol-
+rateperiod`), no dentro de la grilla de un período ya abierto —
+corregido tras una corrida real: al abrir un período, la grilla NO
+tiene esas columnas; la moneda aparece ahí sólo embebida en el texto
+del header (ej. `"USD\nGROUP COST"`), que no es la fuente principal
+(se usa como fallback en `_detectar_moneda_headers` si la lista de
+períodos no trae la columna). `_leer_periodos_rates` lee la moneda por
+fila de período (misma tabla que ya lee fecha/price code) y
+`leer_tarifa_vigente_componente` la propaga a cada fila AD de ese
+período vía `_extraer_filas_ad(..., moneda_periodo=...)`.
+
+Es distinto de lo que hacen los scripts hermanos: ninguno de los dos
+lee moneda en ningún punto — `tourplan_valorizacion_pkg_v3.py` no la
+necesita (copia markup, no valores) y `cbd_impact_simulator_pkg.py`
+asume (confirmado por captura real en ese contexto) que el GROUP COST
+ya está en USD. Acá la moneda SÍ puede variar por transportista (brief
 original: "muchas veces los tarifarios de los transportistas están en
 ARS mientras que el TRFPO está en USD"), así que se lee por línea en
 vez de asumirse.
@@ -135,17 +144,18 @@ Conversión: sólo se completa `TARIFA_USD` cuando la moneda leída es
 constante al principio de `extraccion_tarifas_vigentes.py` — un único
 valor editado directamente en el script por la usuaria, sin CSV aparte,
 igual que el subcode de prueba del simulador hermano). Si la moneda es
-ARS pero `TIPO_CAMBIO_ARS_USD` quedó en `None`, o si la columna de
-moneda no se encuentra en la grilla real (headers no confirmados
-todavía contra Tourplan — ver más abajo), `TARIFA_USD` queda vacío en
-vez de inventar un valor, y el script avisa por consola para que se
-complete/revise a mano.
+ARS pero `TIPO_CAMBIO_ARS_USD` quedó en `None`, o si no se pudo
+determinar la moneda (ni en la lista de períodos ni en el fallback de
+header), `TARIFA_USD` queda vacío en vez de inventar un valor, y el
+script avisa por consola para que se complete/revise a mano.
 
-Sin confirmar todavía: el texto exacto del header en el DOM (¿dice
-literalmente "BUY CURRENCY" o alguna variante como "Buy Ccy"?) y si el
-valor de celda es el código ISO ("ARS"/"USD") o un nombre largo — ajustar
-`idx_ccy` en `leer_tarifa_vigente_componente` en la primera corrida real
-si no matchea.
+Sin confirmar todavía: el texto exacto del header de la columna de
+moneda en la lista de períodos (¿dice literalmente "BUY CURRENCY" o
+alguna variante como "Buy Ccy"?) — ajustar el regex en
+`_leer_periodos_rates` en la primera corrida real si no matchea. El
+fallback de `_detectar_moneda_headers` (headers de la grilla ya
+abierta, ej. `"USD\nGROUP COST"`) sí está confirmado contra datos
+reales (12HT, ver console log de la corrida).
 
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 
