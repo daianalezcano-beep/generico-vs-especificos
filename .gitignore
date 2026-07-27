@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+screenshots/
+tarifas_vigentes.csv
