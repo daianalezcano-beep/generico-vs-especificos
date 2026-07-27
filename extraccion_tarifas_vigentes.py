@@ -650,6 +650,19 @@ def _leer_tabla_rates(driver):
     """)
 
 
+def _listar_tablas_pagina(driver):
+    """Diagnóstico: headers de TODAS las tablas visibles en la página
+    actual — para cuando _leer_tabla_rates no encuentra ninguna con
+    columna COST, y hay que ver a ciegas qué hay en pantalla (ej. una
+    lista de períodos en vez de la grilla de tarifas) sin necesitar el
+    HTML dump completo."""
+    return driver.execute_script("""
+        return Array.from(document.querySelectorAll('table')).map(function(t){
+            return Array.from(t.querySelectorAll('th')).map(function(h){ return h.innerText.trim(); });
+        });
+    """)
+
+
 def leer_tarifa_vigente_componente(driver, codigo):
     """Abre el tab RATES del producto ya en contexto (ver
     buscar_producto) y devuelve una lista de {pax_desde, pax_hasta,
@@ -671,9 +684,16 @@ def leer_tarifa_vigente_componente(driver, codigo):
     ss(driver, f"rates_{codigo[:10]}")
 
     tabla = _leer_tabla_rates(driver)
+    for _ in range(3):
+        if tabla:
+            break
+        time.sleep(2 * VELOCIDAD)
+        tabla = _leer_tabla_rates(driver)
     if not tabla:
         dump(driver, f"rates_sin_tabla_{codigo[:10]}")
-        print(f"    ⚠ No encontré tabla de RATES para {codigo}")
+        tablas_vistas = _listar_tablas_pagina(driver)
+        print(f"    ⚠ No encontré tabla de RATES (con columna COST) para {codigo}")
+        print(f"      Tablas visibles en la página (headers): {tablas_vistas}")
         return []
 
     headers = tabla["headers"]
