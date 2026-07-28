@@ -38,13 +38,10 @@ códigos × 7 rangos de pax = 28 filas) — es esperado, no un bug: con
 transportista de la lista. `MONEDA`/`TARIFA_USD` vinieron vacíos en ese
 archivo — esperado también, es la corrida de antes del fix #4.
 
-Dato a confirmar en la próxima corrida (no es un bug de código, es un
-hallazgo de datos): en las 4 códigos de esa corrida, el rango de pax
-36-41 vino sin valor (`None`) y el rango 42-9999 vino en `0` — igual en
-los 4 códigos, así que puede ser que esos tramos de bus grande
-realmente no tengan tarifa cargada para este período en TRFPO. Revisar
-directamente en Tourplan si tiene sentido, no asumir que es un error de
-lectura.
+Confirmado por la usuaria: los rangos que llegan hasta 9999 (el
+"catch-all" de pax abierto hacia arriba, ej. "42-9999 AD") siempre
+están en 0 — no es un error de lectura, así se carga en Tourplan. El
+otro dato (36-41 sin valor) sigue sin confirmar todavía.
 
 **Fase 1 NO compara nada contra el transportista específico** — sólo
 extrae la tarifa de cada código, sea TRFPO o transportista, en filas

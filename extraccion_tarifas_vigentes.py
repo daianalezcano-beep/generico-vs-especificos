@@ -201,7 +201,7 @@ PRICE_CODE_DEFAULT = "TR"
 # sin quemar tiempo en los ~240 códigos de las muestras si algo falla
 # a mitad de camino. Mismo criterio que FASE2_LIMIT en
 # tourplan_valorizacion_pkg_v3.py.
-LIMIT_PRUEBA = 5
+LIMIT_PRUEBA = 0
 
 # Tipo de cambio ARS→USD a aplicar sobre las filas cuya moneda leída en
 # RATES (columna BUY/SELL CURRENCY) sea ARS — se edita directamente ACÁ,
