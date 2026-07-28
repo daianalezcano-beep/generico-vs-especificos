@@ -953,24 +953,20 @@ def _detectar_moneda_headers(headers):
 
 
 def _parsear_numero(raw):
-    """Convierte el texto de una celda de tarifa a float, soportando
-    tanto "205.18" (USD, punto decimal, sin separador de miles) como
-    "45.320,00" (ARS, punto de miles + coma decimal). Bug real
-    encontrado con datos de 6HOUS1 en ARS: reemplazar ',' → '.' a lo
-    bruto rompe con montos que tienen los dos separadores ("45.320,00"
-    → "45.320.00", dos puntos, float() explota y queda en None) — por
-    eso se identifica cuál separador es el decimal por CUÁL APARECE
-    MÁS A LA DERECHA, y se descarta el otro como separador de miles."""
+    """Convierte el texto de una celda de tarifa a float. Tourplan usa
+    formato US/UK para TODAS las monedas que se vieron hasta ahora —
+    coma = separador de miles, punto = decimal — confirmado con un
+    valor real de 6HOUS1 en ARS: "85,000" (ochenta y cinco mil pesos;
+    si la coma fuera decimal sería "85 pesos", sin sentido para un
+    transfer). Antes se intentaba adivinar cuál separador era el
+    decimal por cuál aparecía más a la derecha (asumiendo que ARS podía
+    venir en formato argentino, punto de miles + coma decimal) — con
+    "85,000" (sin punto) ese heurístico lo interpretaba mal como 85.0.
+    Ahora se asume siempre esta única convención, para USD y para ARS."""
     s = str(raw).replace("$", "").replace(" ", "").strip()
     if not s:
         return None
-    if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif "," in s:
-        s = s.replace(",", ".")
+    s = s.replace(",", "")
     try:
         return float(s)
     except ValueError:

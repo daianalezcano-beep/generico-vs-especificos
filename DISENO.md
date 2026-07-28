@@ -245,24 +245,32 @@ fallback de `_detectar_moneda_headers` (headers de la grilla ya
 abierta, ej. `"USD\nGROUP COST"`) sí está confirmado contra datos
 reales (12HT, ver console log de la corrida).
 
-## Parseo de números (bug real: ARS de 6HOUS1 leía None/0 siempre)
+## Parseo de números (formato US/UK confirmado, no argentino)
 
 Confirmado con datos reales: los códigos de 6HOUS1 (ARS) traían
 `TARIFA_VIGENTE=None` en el rango "1-2 AD" (donde está el valor real
 que la usuaria SÍ ve en pantalla) y `0` en "3-9999" (catch-all, 0
 esperado) — en el 100% de sus ~50 códigos, siempre el mismo patrón.
-Causa: el parseo de número hacía `.replace(",", ".")` a lo bruto,
-asumiendo formato USD sin separador de miles (`"205.18"` → ok). Un
-monto ARS con separador de miles y coma decimal (`"45.320,00"`) se
-rompía: después del `replace` quedaban DOS puntos (`"45.320.00"`),
-`float()` explotaba y cae a `None`. Con TRFPO (USD, montos chicos, sin
-separador de miles) nunca se disparaba.
+Causa original: el parseo de número hacía `.replace(",", ".")` a lo
+bruto. Con TRFPO (USD, `"205.18"`, sin separador de miles) no se
+notaba. Primer intento de arreglo: asumir que un monto con AMBOS
+separadores usa el formato argentino (punto de miles + coma decimal,
+ej. `"45.320,00"`) y detectar cuál es cuál por la posición — pero
+**confirmado con un valor real de 6HOUS1** ("85,000", sin punto en
+absoluto — sólo puede ser "ochenta y cinco mil", con la coma como
+separador de MILES, no decimal; si fuera decimal sería "85 pesos", sin
+sentido para un transfer), quedó claro que Tourplan usa formato US/UK
+para TODAS las monedas, no formato argentino para ARS — la hipótesis
+del punto anterior estaba mal.
 
-Corregido con `_parsear_numero`: identifica cuál separador (`,` o `.`)
-es el DECIMAL por cuál aparece más a la derecha del string, y descarta
-el otro como separador de miles — soporta tanto `"205.18"` (USD) como
-`"45.320,00"` (ARS) sin necesitar saber de antemano en qué moneda está
-cada celda.
+`_parsear_numero` quedó simplificado: siempre quita las comas
+(separador de miles) y deja el punto como decimal, sin intentar
+adivinar por posición. Válido tanto para `"205.18"` (USD) como para
+`"85,000"`/`"85,000.00"` (ARS). Si en algún momento aparece un valor
+real en formato argentino genuino (punto de miles + coma decimal), esta
+regla lo rompería — no hay evidencia de que eso pase, pero si aparece
+un TARIFA_VIGENTE sospechosamente grande o pequeño en una corrida real,
+revisar acá primero.
 
 ## Fase 3 — comparación de gap (`comparacion_gap.py`)
 
