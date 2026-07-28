@@ -24,14 +24,15 @@
 #   él mismo, en Tourplan, todos los códigos vigentes de cada supplier
 #   (listar_codigos_supplier) y les lee la tarifa.
 #
-#   ⚠ SIN VERIFICAR CONTRA TOURPLAN REAL TODAVÍA — ver DISENO.md.
-#   Es esperable ajustar selectores en la primera corrida real, igual
-#   que documentan los scripts hermanos en su propio historial. La
-#   función de listado (listar_codigos_supplier) es la más nueva de
-#   todas — ninguno de los dos scripts hermanos hace algo parecido, así
-#   que su heurística de columnas (código vs. descripción) y su
-#   detección de paginación son las que más probablemente necesiten
-#   ajuste.
+#   VALIDADO CONTRA TOURPLAN REAL (BUE, TRFPO + 6HOUS1): última corrida
+#   completa trajo 116 códigos TRFPO + 52 de 6HOUS1, matching limpio en
+#   204/208 filas de la comparación. Varios bugs reales ya encontrados
+#   y corregidos en el camino — ver DISENO.md para el detalle de cada
+#   uno. Sin confirmar todavía: el texto exacto del header de moneda en
+#   la lista de períodos (`_leer_periodos_rates`), y si conviene generar
+#   una fila por cada período de TRFPO cuando hay más de uno superpuesto
+#   (hoy se elige sólo el de mayor superposición, marcado con
+#   MULTIPLES_PERIODOS_TRFPO — ver DISENO.md).
 # ============================================================
 
 import os, sys, subprocess, importlib, shutil, time, re

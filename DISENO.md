@@ -4,78 +4,46 @@ Ver `BRIEF.md` para el pedido de negocio completo. Este documento registra
 las decisiones de diseño tomadas durante la construcción (algunas
 ajustan/precisan lo que dice `BRIEF.md` a partir de datos reales).
 
-## Estado al 2026-07-27 — resumen para retomar
+## Estado actual (resumen — ver secciones más abajo para el detalle)
 
-**Fase 2 (matching)**: terminada y validada contra los 3 Product List
-reales de `muestras/` (`python test_matching.py`). No tiene pendientes
-abiertos.
+**Fase 2 (matching, `matching_engine.py`)**: terminada, validada contra
+los 3 Product List reales de `muestras/` (`python test_matching.py`).
+Sin pendientes propios — ver "Motor de matching" más abajo por los
+hallazgos de esa validación.
 
-**Fase 1 (extracción, `extraccion_tarifas_vigentes.py`)**: en corridas
-reales contra Tourplan Test, no simulada. Bugs reales encontrados y ya
-corregidos en el código (quedan documentados más abajo en este archivo,
-sección por sección):
-1. Colab no trae Chrome preinstalado → se agregó detección/instalación
-   automática (`_find_chrome`/`_instalar_chrome`).
-2. La heurística de columnas de `listar_codigos_supplier` confundía la
-   celda de Location ("BUE") con la de Code → se pasó a identificar la
-   columna por header ("Code") en vez de por forma del texto.
-3. Abrir RATES no muestra la grilla de tarifas directo — muestra antes
-   una lista de períodos → se agregó navegación de períodos
-   (`_leer_periodos_rates`, `_periodos_en_rango`), con filtro configurable
-   por rango de fechas (`PERIODO_ANALISIS_DESDE/HASTA`) y por Price Code
-   (`PRICE_CODE_DEFAULT`, para evitar leer la vista agregada "All Price
-   Codes" que puede devolver 0.0 sin avisar).
-4. La moneda no está en la grilla de un período ya abierto (headers
-   reales: `"USD\nGROUP COST"`, embebida en el texto) → se movió la
-   lectura a la lista de períodos (misma fila que fecha/price code).
+**Fase 1 + Fase 3 en una sola corrida (`extraccion_tarifas_vigentes.py`)**:
+extrae tarifas vigentes de Tourplan real Y calcula la comparación de
+gap al final, en la misma ejecución. Validado con varias corridas
+reales contra Tourplan Test — la más reciente trajo 116 códigos TRFPO +
+52 de 6HOUS1 en BUE, con 204/208 filas de la comparación sin ninguna
+bandera de revisión. En el camino se encontraron y corrigieron bugs
+reales (Chrome no preinstalado en Colab, columna Code confundida con
+Location, RATES mostrando una lista de períodos en vez de la grilla
+directamente, moneda en la lista de períodos y no en la grilla
+abierta, formato numérico US/UK y no argentino, catch-all de pax 9999,
+período de TRFPO usado en cada comparación no visible) — el detalle de
+cada uno está en su propia sección más abajo.
 
-**Último archivo de resultados real recibido** (corrida ANTERIOR al fix
-#4 de moneda, con `LIMIT_PRUEBA=5`): sólo trajo códigos de TRFPO (4
-códigos × 7 rangos de pax = 28 filas) — es esperado, no un bug: con
-`LIMIT_PRUEBA` bajo, la cola se agota dentro del primer supplier
-(genérico) antes de llegar a los transportistas, porque
-`descubrir_cola` procesa "generico" primero y recién después cada
-transportista de la lista. `MONEDA`/`TARIFA_USD` vinieron vacíos en ese
-archivo — esperado también, es la corrida de antes del fix #4.
+**`comparacion_gap.py`**: la misma Fase 3, como script standalone
+(pandas) para re-correr sólo la comparación sin volver a scrapear
+Tourplan — misma lógica que la versión embebida, ambas dan resultados
+idénticos contra los mismos datos reales.
 
-Confirmado por la usuaria: los rangos que llegan hasta 9999 (el
-"catch-all" de pax abierto hacia arriba, ej. "42-9999 AD") siempre
-están en 0 — no es un error de lectura, así se carga en Tourplan. El
-otro dato (36-41 sin valor) sigue sin confirmar todavía.
+**Pendiente**: Fase 4 (Excel final con el gap resaltado/formateado) sin
+empezar. Backlog de mejoras evaluadas pero no implementadas: desacoplar
+la extracción de TRFPO de la del transportista (ver esa sección), y
+generar una fila por cada período de TRFPO cuando hay más de uno
+superpuesto en vez de sólo el de mayor superposición (ver
+"Visibilidad de qué período se comparó").
 
-Confirmado por la usuaria: `600TRF`/`700TRF` (y `MINWAT`, mismo caso)
-no son tarifas de transporte real — están cargados en 0 a mano, como
-placeholder. Se agregó `CODIGOS_EXCLUIR` en
-`extraccion_tarifas_vigentes.py`: `descubrir_cola` los descarta ANTES
-de abrir el producto (no gasta tiempo de Selenium en ellos), tanto por
-código explícito como por texto de descripción
-(`PATRONES_EXCLUIR_DESCRIPCION` — mismo criterio que `NO_TRANSPORTE` en
-`matching_engine.py`, sin cross-importar ese módulo para no romper la
-convención de "un solo archivo" de este script).
-
-**Fase 1 NO compara nada contra el transportista específico** — sólo
-extrae la tarifa de cada código, sea TRFPO o transportista, en filas
-separadas. Cruzar "este código de transportista corresponde a este
-código TRFPO, ¿cuánto difieren?" es exactamente el trabajo de Fase 3
-(comparación de gap), que todavía no se construyó — necesita juntar la
-salida de Fase 2 (`matching_engine.py`, quién matchea con quién) con la
-salida de Fase 1 (`tarifas_vigentes.xlsx`, cuánto vale cada uno).
-
-**Para la próxima corrida**: subir o quitar `LIMIT_PRUEBA` para que la
-cola llegue a los transportistas y no sólo a TRFPO, y confirmar que
-`MONEDA`/`TARIFA_USD` ya salen bien con el fix de períodos.
-
-**Pendiente sin empezar**: Fase 3 (comparación de gap, usando
-`config/tabla_bases_vehiculo_pax.csv` para el join por vehículo/pax) y
-Fase 4 (Excel de salida final, con formato/resaltado de diferencias).
-
-## Alcance de esta primera entrega
+## Alcance
 
 Fase 1 (extracción de tarifas vigentes) + Fase 2 (motor de matching) +
-capa de conversión de moneda. Fase 3 (comparación de gap) y Fase 4
-(salida Excel) quedan para una siguiente entrega — el archivo de config
-de esta entrega (`tabla_bases_vehiculo_pax.csv`) ya está armado para
-que Fase 3 lo consuma sin cambios de esquema.
+Fase 3 (comparación de gap), con conversión de moneda incluida en las
+tres. Fase 4 (Excel de salida final con formato/resaltado) queda
+pendiente — el archivo de config `tabla_bases_vehiculo_pax.csv` está
+armado por si hace falta ahí (Fase 3 terminó sin necesitarlo, ver esa
+sección).
 
 ## Reuso de las herramientas hermanas
 
@@ -104,9 +72,10 @@ Tourplan NX, cada uno resolviendo un problema distinto:
 
 `extraccion_tarifas_vigentes.py` (Fase 1 de este repo) es la versión
 reducida: `buscar_producto` + navegación a RATES + lectura de grilla,
-sin PCM, sin USED IN, sin subcode, sin loop de períodos histórico — sólo
-la tarifa vigente por rango de pax de cada código, para TRFPO y cada
-transportista.
+sin PCM, sin USED IN, sin subcode — sólo la tarifa vigente por rango de
+pax de cada código, para TRFPO y cada transportista, dentro del rango
+de fechas configurado (`PERIODO_ANALISIS_DESDE/HASTA` — ver sección
+"Períodos y Price Code").
 
 **Sin CSV/Excel de entrada**: a diferencia de los scripts hermanos (que
 leen una lista de trabajo desde un Excel armado a mano, columna
@@ -121,17 +90,15 @@ y construye la cola de trabajo completa preguntándole a Tourplan mismo
 qué códigos existen — no hace falta exportar el Product List de nadie
 de antemano.
 
-**Sin verificar contra Tourplan real todavía** — a diferencia de los
-scripts hermanos (que ya corrieron y se depuraron contra Tourplan Test
-varias veces, ver sus HISTORIAL/README), este script recién adaptado no
-tiene una corrida real encima. Es esperable que la primera corrida real
-encuentre ajustes de selector necesarios (mismo patrón que documentan
-los hermanos) — no tomar el código como validado hasta esa primera
-corrida. `listar_codigos_supplier` es la parte con menos precedente (no
-viene adaptada de ningún script hermano): su heurística para distinguir
-la celda de código de la celda de descripción en la grilla de
-resultados, y su detección de paginación, son las que más probablemente
-necesiten ajuste contra el DOM real.
+**Validado con varias corridas reales contra Tourplan Test** — mismo
+patrón que siguieron los scripts hermanos (se depuraron corrida a
+corrida, ver sus HISTORIAL/README), acá también: cada corrida real
+encontró algo para ajustar, documentado en su propia sección más abajo
+(Chrome en Colab, columna Code vs. Location, lista de períodos, scroll
+virtual, moneda, formato numérico). `listar_codigos_supplier` fue la
+parte con menos precedente (no viene adaptada de ningún script
+hermano) y la que más ajustes necesitó — ver "Scroll virtual" más
+abajo por el estado actual de su heurística de columnas y de scroll.
 
 ## Scroll virtual en listar_codigos_supplier (confirmado por captura real)
 
@@ -161,8 +128,8 @@ scrolls seguidos sin códigos nuevos. Headers de la tabla confirmados
 por la misma captura: `LOCATION, SERVICE, SUPPLIER, SUPPLIER NAME,
 RATE PERIOD, CODE, DESCRIPTION, COMMENT` — coincide con la detección de
 columna "CODE" ya implementada (match exacto, sin necesitar el
-fallback heurístico). Verificar en la próxima corrida si TRFPO ahora
-trae más de 22 códigos.
+fallback heurístico). **Confirmado en la corrida siguiente**: TRFPO
+pasó de 22 a 116 códigos en BUE.
 
 ## Períodos y Price Code
 
@@ -320,12 +287,13 @@ para revisión), `SIN_TARIFA_USD_PARA_COMPARAR` (a alguno de los dos
 lados le falta `TARIFA_USD`, ej. por falta de tipo de cambio).
 
 **Probado contra datos reales** (el `tarifas_vigentes.xlsx` que subió
-la usuaria, TRFPO+6HOUS1): reveló el problema de scroll virtual de
-arriba — con sólo 22 códigos TRFPO descubiertos, 172/208 filas de
-6HOUS1 salían `SIN_MATCH_TRFPO` que en realidad debían matchear. No es
-un bug de esta lógica en sí — depende enteramente de que Fase 1 haya
-descubierto TODOS los códigos TRFPO. Repetir la comparación después de
-una corrida de Fase 1 con el scroll corregido.
+la usuaria, TRFPO+6HOUS1): la primera vez reveló el problema de scroll
+virtual de arriba — con sólo 22 códigos TRFPO descubiertos, 172/208
+filas de 6HOUS1 salían `SIN_MATCH_TRFPO` que en realidad debían
+matchear (no era un bug de esta lógica en sí, dependía de que Fase 1
+descubriera TODOS los códigos TRFPO). Repetida la comparación con el
+scroll corregido (116 códigos TRFPO): 204/208 filas sin ninguna
+bandera, sólo 4 `COLISION_REVISAR`.
 
 ### Embebida en extraccion_tarifas_vigentes.py (una sola ejecución)
 

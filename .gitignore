@@ -1,4 +1,6 @@
 __pycache__/
 *.pyc
 screenshots/
-tarifas_vigentes.csv
+tarifas_vigentes.xlsx
+comparacion_gap.xlsx
+muestras/mapeo_resultado.csv

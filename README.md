@@ -15,14 +15,14 @@ de la validación contra datos reales.
   `(LOCATION, CATEGORIA, GUIA, PAX)` contra la tabla de bases. Validado
   con los 3 Product List reales en `muestras/` — correr
   `python test_matching.py`.
-- ⚠️ **Fase 1 + Fase 3 en una sola corrida**
+- ✅ **Fase 1 + Fase 3 en una sola corrida**
   (`extraccion_tarifas_vigentes.py`): extrae tarifas vigentes de
-  Tourplan Test Y calcula la comparación de gap al final, en la misma
+  Tourplan real Y calcula la comparación de gap al final, en la misma
   ejecución — genera `tarifas_vigentes.xlsx` y `comparacion_gap.xlsx`
-  de una sola vez. En depuración activa con corridas reales — varios
-  bugs reales ya corregidos (ver DISENO.md); el más reciente, que la
-  grilla de resultados usa scroll virtual (no botón de "siguiente")
-  para descubrir todos los códigos de un supplier.
+  de una sola vez. Validado con varias corridas reales contra Tourplan
+  Test (última: 116 códigos TRFPO + 52 de 6HOUS1 en BUE, matching limpio
+  en 204/208 filas) — bugs reales encontrados y corregidos en el camino,
+  ver DISENO.md.
 - ⏳ Fase 4 (salida Excel final con el gap resaltado): pendiente.
 
 ## Estructura
