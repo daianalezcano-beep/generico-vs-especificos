@@ -39,7 +39,9 @@ from matching_engine import mejor_prefijo_trfpo
 
 COLS_SALIDA = [
     "LOCATION", "CODIGO_TRFPO", "SUPPLIER_TRANSPORTISTA", "CODIGO_TRANSPORTISTA",
-    "PAX_DESDE", "PAX_HASTA", "PERIODO_DESDE", "PERIODO_HASTA",
+    "PAX_DESDE", "PAX_HASTA",
+    "PERIODO_TRANSPORTISTA_DESDE", "PERIODO_TRANSPORTISTA_HASTA",
+    "PERIODO_TRFPO_DESDE", "PERIODO_TRFPO_HASTA",
     "TARIFA_TRFPO_USD", "TARIFA_TRANSPORTISTA_USD",
     "DIFERENCIA_USD", "DIFERENCIA_PCT", "FLAGS",
 ]
@@ -107,8 +109,9 @@ def construir_comparacion(df):
                 "CODIGO_TRANSPORTISTA": codigo_t,
                 "PAX_DESDE": fila_t["PAX_DESDE"],
                 "PAX_HASTA": fila_t["PAX_HASTA"],
-                "PERIODO_DESDE": fila_t["PERIODO_DESDE"],
-                "PERIODO_HASTA": fila_t["PERIODO_HASTA"],
+                "PERIODO_TRANSPORTISTA_DESDE": fila_t["PERIODO_DESDE"],
+                "PERIODO_TRANSPORTISTA_HASTA": fila_t["PERIODO_HASTA"],
+                "PERIODO_TRFPO_DESDE": "", "PERIODO_TRFPO_HASTA": "",
                 "TARIFA_TRANSPORTISTA_USD": _r2(fila_t["TARIFA_USD"]),
             }
 
@@ -135,6 +138,14 @@ def construir_comparacion(df):
                                       "FLAGS": ",".join(flags + ["SIN_TRFPO_PARA_ESE_PAX"])})
                 continue
 
+            # Más de un período de TRFPO cargado para este mismo rango de
+            # pax (ej. TRFPO cambió su tarifa a mitad del período del
+            # transportista): se usa el de MAYOR superposición de fechas,
+            # marcado con MULTIPLES_PERIODOS_TRFPO para no descartar el
+            # resto en silencio.
+            if len(candidatas_trfpo) > 1:
+                flags.append("MULTIPLES_PERIODOS_TRFPO")
+
             fila_trfpo = max(
                 candidatas_trfpo.to_dict("records"),
                 key=lambda r: _dias_superposicion(
@@ -156,7 +167,10 @@ def construir_comparacion(df):
                 flags.append("SIN_TARIFA_USD_PARA_COMPARAR")
 
             filas_salida.append({
-                **base, "CODIGO_TRFPO": mejor, "TARIFA_TRFPO_USD": tarifa_trfpo,
+                **base, "CODIGO_TRFPO": mejor,
+                "PERIODO_TRFPO_DESDE": fila_trfpo["PERIODO_DESDE"],
+                "PERIODO_TRFPO_HASTA": fila_trfpo["PERIODO_HASTA"],
+                "TARIFA_TRFPO_USD": tarifa_trfpo,
                 "DIFERENCIA_USD": diff_usd, "DIFERENCIA_PCT": diff_pct,
                 "FLAGS": ",".join(flags),
             })

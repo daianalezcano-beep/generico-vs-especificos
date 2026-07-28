@@ -348,6 +348,47 @@ re-scrapear Tourplan. Si se cambia la lógica de matching/gap, replicar
 el cambio en ambos archivos — probado que dan resultados idénticos
 contra los mismos datos reales (208 filas, mismo desglose de banderas).
 
+## Visibilidad de qué período se comparó (pregunta real de la usuaria)
+
+Pregunta: si alguna de las partes (TRFPO o el transportista) tiene más
+de un período cargado dentro del mismo rango de pax, ¿cómo se
+identifica en la salida?
+
+Antes de este cambio, NO se identificaba: `construir_comparacion_gap`
+siempre elegía el período de TRFPO con mayor superposición de fechas
+contra el período del transportista y descartaba el resto EN SILENCIO
+— la salida sólo mostraba `PERIODO_DESDE`/`PERIODO_HASTA`, que en
+realidad eran las fechas del transportista, sin ninguna columna que
+mostrara qué período de TRFPO se había usado. Si TRFPO cambiaba de
+tarifa a mitad del período del transportista, el segundo período de
+TRFPO quedaba invisible en la comparación.
+
+Corregido: se agregan `PERIODO_TRFPO_DESDE`/`PERIODO_TRFPO_HASTA` como
+columnas separadas de `PERIODO_TRANSPORTISTA_DESDE`/
+`PERIODO_TRANSPORTISTA_HASTA` (renombradas para dejar de ser
+ambiguas), y una bandera `MULTIPLES_PERIODOS_TRFPO` cuando efectivamente
+había más de un período de TRFPO candidato para ese rango de pax — para
+que quede visible que existe otro período de TRFPO a revisar (en
+`tarifas_vigentes.xlsx`) en vez de asumir que el elegido por mayor
+superposición es automáticamente el correcto.
+
+Nota: en los datos reales vistos hasta ahora, TRFPO siempre tiene UN
+solo período por código (`01/04/2026-31/08/2026`) mientras que 6HOUS1
+tiene DOS (`01/01-31/07` y `01/08-31/08`) — ese caso YA estaba bien
+resuelto antes de este cambio (cada período del transportista genera
+su propia fila, comparada contra el único TRFPO). El caso que faltaba
+cubrir es el inverso (TRFPO con más de un período) — no confirmado
+todavía con datos reales, pero ahora al menos queda visible si ocurre.
+
+**Pendiente sin resolver, a evaluar si aparece en datos reales**: hoy
+sigue eligiéndose UN solo período de TRFPO (el de mayor superposición),
+no se generan filas separadas por cada período de TRFPO que se
+superponga parcialmente. Si en una corrida real aparece
+`MULTIPLES_PERIODOS_TRFPO` con superposiciones parciales genuinas (no
+sólo un período con 0 días de superposición que quedó ahí por
+descarte), reconsiderar si conviene generar una fila por cada período
+de TRFPO en vez de una sola con el de mayor superposición.
+
 ## Limpieza de salida: descartar catch-all 9999 y redondear a 2 decimales
 
 A pedido de la usuaria, sobre datos reales (948 filas en

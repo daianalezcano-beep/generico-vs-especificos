@@ -1174,7 +1174,9 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
 
 COLS_GAP = [
     "LOCATION", "CODIGO_TRFPO", "SUPPLIER_TRANSPORTISTA", "CODIGO_TRANSPORTISTA",
-    "PAX_DESDE", "PAX_HASTA", "PERIODO_DESDE", "PERIODO_HASTA",
+    "PAX_DESDE", "PAX_HASTA",
+    "PERIODO_TRANSPORTISTA_DESDE", "PERIODO_TRANSPORTISTA_HASTA",
+    "PERIODO_TRFPO_DESDE", "PERIODO_TRFPO_HASTA",
     "TARIFA_TRFPO_USD", "TARIFA_TRANSPORTISTA_USD",
     "DIFERENCIA_USD", "DIFERENCIA_PCT", "FLAGS",
 ]
@@ -1222,7 +1224,9 @@ def construir_comparacion_gap(filas):
                 "SUPPLIER_TRANSPORTISTA": ft["SUPPLIER"],
                 "CODIGO_TRANSPORTISTA": ft["PRODUCT_CODE"],
                 "PAX_DESDE": ft["PAX_DESDE"], "PAX_HASTA": ft["PAX_HASTA"],
-                "PERIODO_DESDE": ft["PERIODO_DESDE"], "PERIODO_HASTA": ft["PERIODO_HASTA"],
+                "PERIODO_TRANSPORTISTA_DESDE": ft["PERIODO_DESDE"],
+                "PERIODO_TRANSPORTISTA_HASTA": ft["PERIODO_HASTA"],
+                "PERIODO_TRFPO_DESDE": "", "PERIODO_TRFPO_HASTA": "",
                 "TARIFA_TRANSPORTISTA_USD": ft["TARIFA_USD"],
             }
             mejor, candidatos = _mejor_prefijo_trfpo(ft["PRODUCT_CODE"], codigos_trfpo)
@@ -1248,6 +1252,16 @@ def construir_comparacion_gap(filas):
                                "FLAGS": ",".join(flags + ["SIN_TRFPO_PARA_ESE_PAX"])})
                 continue
 
+            # Más de un período de TRFPO cargado para este mismo rango de
+            # pax (ej. TRFPO cambió su tarifa a mitad del período del
+            # transportista): se usa el de MAYOR superposición de fechas
+            # con el período del transportista, y se marca con
+            # MULTIPLES_PERIODOS_TRFPO para no descartar el resto en
+            # silencio — el/la que revise sabe que hay otro(s) período(s)
+            # de TRFPO en tarifas_vigentes.xlsx para ese mismo código/pax.
+            if len(candidatas) > 1:
+                flags.append("MULTIPLES_PERIODOS_TRFPO")
+
             def _dias(f):
                 return _dias_superposicion(
                     parsear_fecha(ft["PERIODO_DESDE"]), parsear_fecha(ft["PERIODO_HASTA"]),
@@ -1267,7 +1281,10 @@ def construir_comparacion_gap(filas):
             else:
                 flags.append("SIN_TARIFA_USD_PARA_COMPARAR")
 
-            salida.append({**base, "CODIGO_TRFPO": mejor, "TARIFA_TRFPO_USD": tarifa_trfpo,
+            salida.append({**base, "CODIGO_TRFPO": mejor,
+                           "PERIODO_TRFPO_DESDE": fila_trfpo["PERIODO_DESDE"],
+                           "PERIODO_TRFPO_HASTA": fila_trfpo["PERIODO_HASTA"],
+                           "TARIFA_TRFPO_USD": tarifa_trfpo,
                            "DIFERENCIA_USD": diff_usd, "DIFERENCIA_PCT": diff_pct,
                            "FLAGS": ",".join(flags)})
     return salida
