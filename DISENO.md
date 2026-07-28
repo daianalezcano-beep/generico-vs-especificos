@@ -222,6 +222,25 @@ fallback de `_detectar_moneda_headers` (headers de la grilla ya
 abierta, ej. `"USD\nGROUP COST"`) sí está confirmado contra datos
 reales (12HT, ver console log de la corrida).
 
+## Parseo de números (bug real: ARS de 6HOUS1 leía None/0 siempre)
+
+Confirmado con datos reales: los códigos de 6HOUS1 (ARS) traían
+`TARIFA_VIGENTE=None` en el rango "1-2 AD" (donde está el valor real
+que la usuaria SÍ ve en pantalla) y `0` en "3-9999" (catch-all, 0
+esperado) — en el 100% de sus ~50 códigos, siempre el mismo patrón.
+Causa: el parseo de número hacía `.replace(",", ".")` a lo bruto,
+asumiendo formato USD sin separador de miles (`"205.18"` → ok). Un
+monto ARS con separador de miles y coma decimal (`"45.320,00"`) se
+rompía: después del `replace` quedaban DOS puntos (`"45.320.00"`),
+`float()` explotaba y cae a `None`. Con TRFPO (USD, montos chicos, sin
+separador de miles) nunca se disparaba.
+
+Corregido con `_parsear_numero`: identifica cuál separador (`,` o `.`)
+es el DECIMAL por cuál aparece más a la derecha del string, y descarta
+el otro como separador de miles — soporta tanto `"205.18"` (USD) como
+`"45.320,00"` (ARS) sin necesitar saber de antemano en qué moneda está
+cada celda.
+
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 
 Validado corriendo `test_matching.py` contra los 3 Product List reales

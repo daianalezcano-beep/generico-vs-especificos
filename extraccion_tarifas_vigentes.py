@@ -903,6 +903,31 @@ def _detectar_moneda_headers(headers):
     return ""
 
 
+def _parsear_numero(raw):
+    """Convierte el texto de una celda de tarifa a float, soportando
+    tanto "205.18" (USD, punto decimal, sin separador de miles) como
+    "45.320,00" (ARS, punto de miles + coma decimal). Bug real
+    encontrado con datos de 6HOUS1 en ARS: reemplazar ',' → '.' a lo
+    bruto rompe con montos que tienen los dos separadores ("45.320,00"
+    → "45.320.00", dos puntos, float() explota y queda en None) — por
+    eso se identifica cuál separador es el decimal por CUÁL APARECE
+    MÁS A LA DERECHA, y se descarta el otro como separador de miles."""
+    s = str(raw).replace("$", "").replace(" ", "").strip()
+    if not s:
+        return None
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def _extraer_filas_ad(tabla, codigo, moneda_periodo=""):
     """De una tabla ya leída con _leer_tabla_rates, devuelve las filas
     de rango de pax adulto (AD) como {pax_desde, pax_hasta, tarifa,
@@ -935,10 +960,7 @@ def _extraer_filas_ad(tabla, codigo, moneda_periodo=""):
             continue
         raw = row["inputs"][0] if (row["inputs"] and row["inputs"][0]) else (
             celdas[idx_cost] if idx_cost < len(celdas) else "")
-        try:
-            valor = float(str(raw).replace(",", ".").replace("$", "").strip())
-        except Exception:
-            valor = None
+        valor = _parsear_numero(raw)
         out.append({
             "pax_desde": int(m.group(1)),
             "pax_hasta": int(m.group(2)),
