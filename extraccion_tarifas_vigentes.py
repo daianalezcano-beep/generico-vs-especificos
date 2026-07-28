@@ -174,6 +174,7 @@ COMPARACIONES = [
     },
 ]
 OUTPUT_XLSX = "tarifas_vigentes.xlsx"
+OUTPUT_GAP_XLSX = "comparacion_gap.xlsx"
 SS_DIR      = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
 
@@ -644,41 +645,42 @@ def _scrapear_pagina_resultados(driver):
     """)
 
 
-def _pasar_pagina_siguiente(driver):
-    """Intenta avanzar a la próxima página de resultados. SIN
-    CONFIRMAR contra el DOM real todavía (hallazgo pendiente de
-    verificar: TRFPO en una corrida real devolvió sólo 22 códigos, un
-    número sospechosamente redondo para ser el catálogo completo — ver
-    DISENO.md). Heurística genérica: busca un control visible de
-    "siguiente" (texto/aria-label con "next"/"siguiente"/">") dentro de
-    algo con pinta de paginador, que no esté deshabilitado. Devuelve
-    True si encontró y clickeó uno, False si no hay más páginas."""
-    return bool(driver.execute_script(r"""
-        function vis(e){ return !!(e && (e.offsetWidth||e.offsetHeight||e.getClientRects().length)); }
-        var candidatos = Array.from(document.querySelectorAll(
-            "[class*='pagin' i] button, [class*='pager' i] button, " +
-            "[class*='pagin' i] a, [class*='pager' i] a, " +
-            "button[aria-label*='next' i], a[aria-label*='next' i]"
-        )).filter(vis);
-        var btn = candidatos.find(function(b){
-            var t = (b.getAttribute('aria-label') || b.innerText || b.title || '').toLowerCase().trim();
-            var deshabilitado = b.disabled || b.classList.contains('disabled') ||
-                                 b.getAttribute('aria-disabled') === 'true';
-            return !deshabilitado && (/next|siguiente/.test(t) || t === '>' || t === '»');
-        });
-        if (!btn) return false;
-        btn.click();
-        return true;
+def _hacer_scroll_resultados(driver):
+    """Avanza un paso de scroll en el contenedor de resultados —
+    confirmado por captura real que la grilla de Product Search NO
+    pagina con botón "siguiente": es una lista larga con scroll (virtual
+    — sólo las filas visibles están en el DOM, por eso antes se leían
+    siempre ~20-22 códigos, el tamaño del viewport, no el catálogo
+    completo). Busca el ancestro con scroll real más cercano a la
+    tabla y le corre el scrollTop un clientHeight. Devuelve True si
+    pudo avanzar, False si ya está en el fondo."""
+    return bool(driver.execute_script("""
+        function contenedorScroll(){
+            var fila = document.querySelector('table tbody tr');
+            if (!fila) return null;
+            var cur = fila.closest('table');
+            while (cur && cur !== document.body){
+                if (cur.scrollHeight > cur.clientHeight + 5) return cur;
+                cur = cur.parentElement;
+            }
+            return document.scrollingElement || document.body;
+        }
+        var c = contenedorScroll();
+        if (!c) return false;
+        var antes = c.scrollTop;
+        c.scrollTop = c.scrollTop + c.clientHeight;
+        return c.scrollTop > antes;
     """))
 
 
 def listar_codigos_supplier(driver, location, supplier, service_type=None):
     """Busca Location/Supplier(/ServiceType) en Product Search SIN
     código (deja ese campo vacío) y devuelve TODOS los resultados —
-    recorriendo TODAS las páginas si la grilla pagina — como lista de
-    {codigo, descripcion}. Es lo que le permite a este script no
-    necesitar ningún CSV/Excel de entrada: le alcanza con (location,
-    supplier) — ver COMPARACIONES."""
+    scrolleando la grilla (virtual scroll, sin botón de paginación,
+    ver _hacer_scroll_resultados) hasta que dejan de aparecer códigos
+    nuevos — como lista de {codigo, descripcion}. Es lo que le permite
+    a este script no necesitar ningún CSV/Excel de entrada: le alcanza
+    con (location, supplier) — ver COMPARACIONES."""
     location = str(location).strip() if location not in (None, "") else ""
     supplier = str(supplier).strip() if supplier not in (None, "") else ""
     print(f"\n  📋 Listando códigos: {location}/{supplier}"
@@ -689,8 +691,9 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
 
     items_por_codigo = {}
     headers_vistos = []
-    MAX_PAGINAS = 50
-    for pagina in range(1, MAX_PAGINAS + 1):
+    MAX_INTENTOS = 300
+    intentos_sin_nuevos = 0
+    for intento in range(1, MAX_INTENTOS + 1):
         resultado = _scrapear_pagina_resultados(driver)
         if not resultado:
             break
@@ -700,17 +703,24 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
             if item["codigo"] not in items_por_codigo:
                 items_por_codigo[item["codigo"]] = item
                 nuevos += 1
-        print(f"    página {pagina}: {len(resultado.get('items', []))} códigos "
-              f"({nuevos} nuevos, {len(items_por_codigo)} acumulados)")
+        if nuevos:
+            print(f"    scroll {intento}: {nuevos} códigos nuevos "
+                  f"({len(items_por_codigo)} acumulados)")
+            intentos_sin_nuevos = 0
+        else:
+            intentos_sin_nuevos += 1
 
-        if nuevos == 0 and pagina > 1:
+        # 3 scrolls seguidos sin nada nuevo = asumimos que llegamos al
+        # final (margen por si el scroll virtual tarda en renderizar).
+        if intentos_sin_nuevos >= 3:
             break
-        if not _pasar_pagina_siguiente(driver):
-            break
-        time.sleep(2 * VELOCIDAD)
+        if not _hacer_scroll_resultados(driver):
+            if intentos_sin_nuevos >= 1:
+                break
+        time.sleep(1 * VELOCIDAD)
     else:
-        print(f"    ⚠ Llegué al tope de {MAX_PAGINAS} páginas para {location}/{supplier} "
-              f"— puede haber más códigos sin leer, revisar a mano.")
+        print(f"    ⚠ Llegué al tope de {MAX_INTENTOS} scrolls para "
+              f"{location}/{supplier} — puede haber más códigos sin leer.")
 
     if not items_por_codigo:
         dump(driver, f"listado_vacio_{supplier[:15]}")
@@ -1150,6 +1160,113 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
     return None
 
 
+# ── Fase 3 embebida: comparación de gap (versión en Python puro de
+# comparacion_gap.py — sin pandas, para que este script siga siendo
+# autocontenido en un solo archivo/una sola corrida de Colab. Misma
+# lógica que ese archivo standalone; si se cambia una, replicar en la
+# otra. Ver DISENO.md) ──────────────────────────────────────────────
+
+COLS_GAP = [
+    "LOCATION", "CODIGO_TRFPO", "SUPPLIER_TRANSPORTISTA", "CODIGO_TRANSPORTISTA",
+    "PAX_DESDE", "PAX_HASTA", "PERIODO_DESDE", "PERIODO_HASTA",
+    "TARIFA_TRFPO_USD", "TARIFA_TRANSPORTISTA_USD",
+    "DIFERENCIA_USD", "DIFERENCIA_PCT", "FLAGS",
+]
+
+
+def _mejor_prefijo_trfpo(codigo, codigos_trfpo_desc):
+    """Copiado de matching_engine.py::mejor_prefijo_trfpo."""
+    candidatos = [c for c in codigos_trfpo_desc if codigo.startswith(c)]
+    if not candidatos:
+        return None, []
+    return max(candidatos, key=len), candidatos
+
+
+def _dias_superposicion(desde1, hasta1, desde2, hasta2):
+    """Copiado de comparacion_gap.py::_dias_superposicion. Días de
+    superposición entre dos rangos de fechas — 0 (no negativo) si no
+    se superponen o si falta alguna fecha, para poder usar max() sin
+    excepciones por None."""
+    if not (desde1 and hasta1 and desde2 and hasta2):
+        return 0
+    inicio = max(desde1, desde2)
+    fin = min(hasta1, hasta2)
+    return max(0, (fin - inicio).days)
+
+
+def construir_comparacion_gap(filas):
+    """A partir de filas_salida (la misma lista de dicts que se
+    escribe en tarifas_vigentes.xlsx, ya en memoria — no hace falta
+    releer el Excel) calcula el gap TRFPO vs. cada código de
+    transportista. Ver comparacion_gap.py para el detalle de banderas
+    y criterio de match (idéntico acá, sólo sin pandas)."""
+    por_location = {}
+    for f in filas:
+        por_location.setdefault(f["LOCATION"], []).append(f)
+
+    salida = []
+    for location, filas_loc in por_location.items():
+        filas_trfpo = [f for f in filas_loc if f["ES_GENERICO"]]
+        filas_transp = [f for f in filas_loc if not f["ES_GENERICO"]]
+        codigos_trfpo = sorted({f["PRODUCT_CODE"] for f in filas_trfpo}, key=len, reverse=True)
+
+        for ft in filas_transp:
+            base = {
+                "LOCATION": location,
+                "SUPPLIER_TRANSPORTISTA": ft["SUPPLIER"],
+                "CODIGO_TRANSPORTISTA": ft["PRODUCT_CODE"],
+                "PAX_DESDE": ft["PAX_DESDE"], "PAX_HASTA": ft["PAX_HASTA"],
+                "PERIODO_DESDE": ft["PERIODO_DESDE"], "PERIODO_HASTA": ft["PERIODO_HASTA"],
+                "TARIFA_TRANSPORTISTA_USD": ft["TARIFA_USD"],
+            }
+            mejor, candidatos = _mejor_prefijo_trfpo(ft["PRODUCT_CODE"], codigos_trfpo)
+            flags = []
+            if len(candidatos) > 1:
+                flags.append("COLISION_REVISAR")
+            if mejor is None:
+                salida.append({**base, "CODIGO_TRFPO": "", "TARIFA_TRFPO_USD": None,
+                               "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
+                               "FLAGS": ",".join(flags + ["SIN_MATCH_TRFPO"])})
+                continue
+
+            candidatas = [
+                f for f in filas_trfpo
+                if f["PRODUCT_CODE"] == mejor
+                and f["PAX_DESDE"] is not None and f["PAX_HASTA"] is not None
+                and ft["PAX_DESDE"] is not None and ft["PAX_HASTA"] is not None
+                and f["PAX_DESDE"] <= ft["PAX_HASTA"] and f["PAX_HASTA"] >= ft["PAX_DESDE"]
+            ]
+            if not candidatas:
+                salida.append({**base, "CODIGO_TRFPO": mejor, "TARIFA_TRFPO_USD": None,
+                               "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
+                               "FLAGS": ",".join(flags + ["SIN_TRFPO_PARA_ESE_PAX"])})
+                continue
+
+            def _dias(f):
+                return _dias_superposicion(
+                    parsear_fecha(ft["PERIODO_DESDE"]), parsear_fecha(ft["PERIODO_HASTA"]),
+                    parsear_fecha(f["PERIODO_DESDE"]), parsear_fecha(f["PERIODO_HASTA"]))
+
+            fila_trfpo = max(candidatas, key=_dias)
+            if _dias(fila_trfpo) == 0:
+                flags.append("SIN_SUPERPOSICION_DE_PERIODO")
+
+            tarifa_trfpo = fila_trfpo["TARIFA_USD"]
+            tarifa_transp = ft["TARIFA_USD"]
+            diff_usd = diff_pct = None
+            if tarifa_trfpo is not None and tarifa_transp is not None:
+                diff_usd = tarifa_transp - tarifa_trfpo
+                if tarifa_trfpo:
+                    diff_pct = round((tarifa_transp / tarifa_trfpo - 1) * 100, 2)
+            else:
+                flags.append("SIN_TARIFA_USD_PARA_COMPARAR")
+
+            salida.append({**base, "CODIGO_TRFPO": mejor, "TARIFA_TRFPO_USD": tarifa_trfpo,
+                           "DIFERENCIA_USD": diff_usd, "DIFERENCIA_PCT": diff_pct,
+                           "FLAGS": ",".join(flags)})
+    return salida
+
+
 # ── Main ──────────────────────────────────────────────────────────
 
 def main():
@@ -1222,6 +1339,30 @@ def main():
         hoja.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
     wb.save(OUTPUT_XLSX)
     print(f"\n✅ {len(filas_salida)} filas escritas en {OUTPUT_XLSX}")
+
+    print("\n🔄 Calculando comparación de gap (Fase 3)...")
+    comparacion = construir_comparacion_gap(filas_salida)
+    wb_gap = Workbook()
+    hoja_gap = wb_gap.active
+    hoja_gap.title = "COMPARACION_GAP"
+    hoja_gap.append(COLS_GAP)
+    for c in hoja_gap[1]:
+        c.font = Font(bold=True)
+    for fila in comparacion:
+        hoja_gap.append([fila.get(c, "") for c in COLS_GAP])
+    for i, c in enumerate(COLS_GAP, start=1):
+        hoja_gap.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
+    wb_gap.save(OUTPUT_GAP_XLSX)
+    print(f"✅ {len(comparacion)} filas escritas en {OUTPUT_GAP_XLSX}")
+
+    con_flags = [f for f in comparacion if f["FLAGS"]]
+    if con_flags:
+        conteo = {}
+        for f in con_flags:
+            conteo[f["FLAGS"]] = conteo.get(f["FLAGS"], 0) + 1
+        print(f"\n{len(con_flags)} filas con alguna bandera (revisar):")
+        for flag, n in sorted(conteo.items(), key=lambda x: -x[1]):
+            print(f"    {flag}: {n}")
 
 
 if __name__ == "__main__":

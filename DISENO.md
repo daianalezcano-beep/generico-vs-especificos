@@ -133,28 +133,36 @@ la celda de código de la celda de descripción en la grilla de
 resultados, y su detección de paginación, son las que más probablemente
 necesiten ajuste contra el DOM real.
 
-## Paginación en listar_codigos_supplier (sospecha fuerte, no confirmada)
+## Scroll virtual en listar_codigos_supplier (confirmado por captura real)
 
-Corriendo `comparacion_gap.py` (ver más abajo) contra datos reales:
-TRFPO devolvió sólo **22 códigos** en BUE, y de los 52 códigos de
-6HOUS1, **172 de 208 filas** no encontraron ningún prefijo TRFPO — pero
-mirando los códigos uno por uno, la mayoría SON rutas de transporte
-normales (`EZHTAU`, `HTAEAU`, `HRDAU`, `FARAU`, etc.) que en las
-muestras (`muestras/Product_List_TRFPO.csv`) sí tienen su TRFPO
-correspondiente (`EZHT`, `HTAE`, `HRD`, `FAR`...). 22 es un número
-sospechosamente redondo para ser el catálogo completo de TRFPO en BUE
-— la hipótesis más probable es que la grilla de resultados pagina, y
-`listar_codigos_supplier` sólo estaba leyendo la primera página.
+Corriendo `comparacion_gap.py` contra datos reales: TRFPO devolvió sólo
+**22 códigos** en BUE, y de los 52 códigos de 6HOUS1, **172 de 208
+filas** no encontraron ningún prefijo TRFPO — pero mirando los códigos
+uno por uno, la mayoría SON rutas de transporte normales (`EZHTAU`,
+`HTAEAU`, `HRDAU`, `FARAU`, etc.) que en las muestras
+(`muestras/Product_List_TRFPO.csv`) sí tienen su TRFPO correspondiente
+(`EZHT`, `HTAE`, `HRD`, `FAR`...). 22 es un número sospechosamente
+redondo para ser el catálogo completo de TRFPO en BUE.
 
-Se agregó manejo de paginación (`_pasar_pagina_siguiente` +
-`_scrapear_pagina_resultados` en loop, acumulando por código hasta que
-no aparecen códigos nuevos o no hay botón de "siguiente"). **El
-selector del botón de paginación NO está confirmado contra el DOM
-real** — es una heurística genérica (texto/aria-label con
-"next"/"siguiente"/">" dentro de algo con clase "pagin"/"pager", no
-deshabilitado). Verificar en la próxima corrida si ahora TRFPO trae
-más de 22 códigos; si sigue en 22, revisar si el heurístico de
-"siguiente" no está encontrando el botón real de Tourplan.
+**Confirmado con una captura real de la pantalla RESULTS de Product
+Search**: NO hay ningún control de paginación (ni "siguiente" ni
+números de página) — es una lista larga con scrollbar. La cantidad de
+filas visibles en el viewport de la captura (~20) coincide con los 22
+códigos que se estaban leyendo siempre: la grilla usa scroll VIRTUAL
+(sólo renderiza las filas visibles en el DOM), así que
+`document.querySelectorAll('table tbody tr')` sólo veía lo que entraba
+en pantalla, sin necesidad de ningún botón — hacía falta scrollear.
+
+Se reemplazó el enfoque de "página siguiente" (basado en un botón que
+no existe) por `_hacer_scroll_resultados`: busca el ancestro con scroll
+real más cercano a la tabla y le corre `scrollTop` un `clientHeight` por
+vez, re-leyendo después de cada scroll y acumulando por código hasta 3
+scrolls seguidos sin códigos nuevos. Headers de la tabla confirmados
+por la misma captura: `LOCATION, SERVICE, SUPPLIER, SUPPLIER NAME,
+RATE PERIOD, CODE, DESCRIPTION, COMMENT` — coincide con la detección de
+columna "CODE" ya implementada (match exacto, sin necesitar el
+fallback heurístico). Verificar en la próxima corrida si TRFPO ahora
+trae más de 22 códigos.
 
 ## Períodos y Price Code
 
@@ -312,12 +320,33 @@ para revisión), `SIN_TARIFA_USD_PARA_COMPARAR` (a alguno de los dos
 lados le falta `TARIFA_USD`, ej. por falta de tipo de cambio).
 
 **Probado contra datos reales** (el `tarifas_vigentes.xlsx` que subió
-la usuaria, TRFPO+6HOUS1): reveló el problema de paginación de arriba
-— con sólo 22 códigos TRFPO discutido, 172/208 filas de 6HOUS1 salían
-`SIN_MATCH_TRFPO` que en realidad debían matchear. No es un bug de
-`comparacion_gap.py` en sí — depende enteramente de que Fase 1 haya
+la usuaria, TRFPO+6HOUS1): reveló el problema de scroll virtual de
+arriba — con sólo 22 códigos TRFPO descubiertos, 172/208 filas de
+6HOUS1 salían `SIN_MATCH_TRFPO` que en realidad debían matchear. No es
+un bug de esta lógica en sí — depende enteramente de que Fase 1 haya
 descubierto TODOS los códigos TRFPO. Repetir la comparación después de
-una corrida de Fase 1 con la paginación corregida.
+una corrida de Fase 1 con el scroll corregido.
+
+### Embebida en extraccion_tarifas_vigentes.py (una sola ejecución)
+
+A pedido de la usuaria (le resultaba confuso tener que correr dos
+scripts en dos lugares distintos): la misma lógica de arriba se portó
+a Python puro (sin pandas — `_mejor_prefijo_trfpo`,
+`_dias_superposicion`, `construir_comparacion_gap` en
+`extraccion_tarifas_vigentes.py`) y se llama automáticamente al final
+de `main()`, sobre `filas_salida` ya en memoria (sin necesidad de
+releer el Excel). Una sola corrida de Colab ahora genera los dos
+archivos: `tarifas_vigentes.xlsx` y `comparacion_gap.xlsx`.
+
+Se aceptó duplicar estas ~4 funciones chicas entre
+`extraccion_tarifas_vigentes.py` y `comparacion_gap.py` (en vez de que
+uno importe al otro) para que el primero siga siendo un solo archivo
+autocontenido pegable en una celda de Colab — mismo criterio que ya
+tenían los scripts hermanos. `comparacion_gap.py` standalone se
+mantiene aparte para poder re-correr sólo la comparación sin
+re-scrapear Tourplan. Si se cambia la lógica de matching/gap, replicar
+el cambio en ambos archivos — probado que dan resultados idénticos
+contra los mismos datos reales (208 filas, mismo desglose de banderas).
 
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 

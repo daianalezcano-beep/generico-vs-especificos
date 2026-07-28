@@ -15,16 +15,14 @@ de la validación contra datos reales.
   `(LOCATION, CATEGORIA, GUIA, PAX)` contra la tabla de bases. Validado
   con los 3 Product List reales en `muestras/` — correr
   `python test_matching.py`.
-- ⚠️ **Fase 1 — extracción de tarifas vigentes**
-  (`extraccion_tarifas_vigentes.py`): en depuración activa con corridas
-  reales contra Tourplan Test — varios bugs reales ya corregidos (ver
-  DISENO.md), sospecha de paginación sin confirmar todavía en
-  `listar_codigos_supplier`.
-- ⚠️ **Fase 3 — comparación de gap** (`comparacion_gap.py`): matchea
-  cada código de transportista contra su TRFPO (reusa
-  `matching_engine.py`) y calcula la diferencia en USD. Probado contra
-  datos reales — su precisión depende de que Fase 1 haya descubierto
-  TODOS los códigos TRFPO (ver hallazgo de paginación en DISENO.md).
+- ⚠️ **Fase 1 + Fase 3 en una sola corrida**
+  (`extraccion_tarifas_vigentes.py`): extrae tarifas vigentes de
+  Tourplan Test Y calcula la comparación de gap al final, en la misma
+  ejecución — genera `tarifas_vigentes.xlsx` y `comparacion_gap.xlsx`
+  de una sola vez. En depuración activa con corridas reales — varios
+  bugs reales ya corregidos (ver DISENO.md); el más reciente, que la
+  grilla de resultados usa scroll virtual (no botón de "siguiente")
+  para descubrir todos los códigos de un supplier.
 - ⏳ Fase 4 (salida Excel final con el gap resaltado): pendiente.
 
 ## Estructura
@@ -33,17 +31,21 @@ de la validación contra datos reales.
 - `DISENO.md` — decisiones de diseño y hallazgos de validación.
 - `matching_engine.py` — motor de matching (Fase 2), puro pandas/regex.
 - `test_matching.py` — corrida de validación contra `muestras/`.
-- `extraccion_tarifas_vigentes.py` — extracción de tarifa vigente por
-  código (Fase 1), Selenium contra Tourplan NX. No necesita CSV/Excel de
-  entrada — busca los códigos él mismo en Tourplan. Editar `USERNAME`,
-  `PASSWORD`, `COMPARACIONES`, `TIPO_CAMBIO_ARS_USD`,
-  `PERIODO_ANALISIS_DESDE/HASTA` y `PRICE_CODE_DEFAULT` (todo al
-  principio del archivo) antes de correr. `MOSTRAR_CAPTURAS=True`
-  muestra las capturas inline si se corre en Colab/Jupyter (opcional).
-  Salida: `tarifas_vigentes.xlsx` (una fila por código + período + rango
-  de pax).
-- `comparacion_gap.py` — comparación de gap (Fase 3), pandas puro. Uso:
-  `python comparacion_gap.py [tarifas_vigentes.xlsx] [salida.xlsx]`.
+- `extraccion_tarifas_vigentes.py` — **el script que corrés**. Extrae
+  tarifa vigente por código (Fase 1), Selenium contra Tourplan NX, y al
+  final calcula la comparación de gap (Fase 3) automáticamente, todo en
+  una sola ejecución. No necesita CSV/Excel de entrada — busca los
+  códigos él mismo en Tourplan. Editar `USERNAME`, `PASSWORD`,
+  `COMPARACIONES`, `TIPO_CAMBIO_ARS_USD`, `PERIODO_ANALISIS_DESDE/HASTA`
+  y `PRICE_CODE_DEFAULT` (todo al principio del archivo) antes de
+  correr. `MOSTRAR_CAPTURAS=True` muestra las capturas inline si se
+  corre en Colab/Jupyter (opcional). Salida: `tarifas_vigentes.xlsx`
+  (una fila por código + período + rango de pax) y
+  `comparacion_gap.xlsx` (el gap TRFPO vs. cada transportista).
+- `comparacion_gap.py` — la misma Fase 3, como script standalone
+  (pandas) para re-correr SÓLO la comparación sobre un
+  `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.
+  Uso: `python comparacion_gap.py [tarifas_vigentes.xlsx] [salida.xlsx]`.
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
   por location/categoría/guía (editable, sin hardcodear en código). Ya
   no lo usa Fase 3 (ver DISENO.md) — queda por si hace falta en Fase 4.

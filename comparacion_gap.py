@@ -18,6 +18,14 @@ tabla_bases_vehiculo_pax.csv. El único cruce que hace falta es:
    fechas si hay más de uno) con la fila del transportista.
 3. Gap = TARIFA_USD del transportista vs. TARIFA_USD de TRFPO.
 
+NOTA: `extraccion_tarifas_vigentes.py` (Fase 1) ya corre esta misma
+comparación automáticamente al final de su propia ejecución (versión
+en Python puro, sin pandas, embebida ahí para que una sola corrida de
+Colab genere los dos Excel de una — ver DISENO.md). Este archivo queda
+para volver a correr SÓLO la comparación sin re-scrapear Tourplan (ej.
+después de editar `tarifas_vigentes.xlsx` a mano, o para reprocesar con
+otro archivo de entrada).
+
 Requiere pandas + openpyxl. Uso:
     python comparacion_gap.py [tarifas_vigentes.xlsx] [salida.xlsx]
 (default: tarifas_vigentes.xlsx → comparacion_gap.xlsx)
