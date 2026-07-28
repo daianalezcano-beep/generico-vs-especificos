@@ -43,6 +43,16 @@ Confirmado por la usuaria: los rangos que llegan hasta 9999 (el
 están en 0 — no es un error de lectura, así se carga en Tourplan. El
 otro dato (36-41 sin valor) sigue sin confirmar todavía.
 
+Confirmado por la usuaria: `600TRF`/`700TRF` (y `MINWAT`, mismo caso)
+no son tarifas de transporte real — están cargados en 0 a mano, como
+placeholder. Se agregó `CODIGOS_EXCLUIR` en
+`extraccion_tarifas_vigentes.py`: `descubrir_cola` los descarta ANTES
+de abrir el producto (no gasta tiempo de Selenium en ellos), tanto por
+código explícito como por texto de descripción
+(`PATRONES_EXCLUIR_DESCRIPCION` — mismo criterio que `NO_TRANSPORTE` en
+`matching_engine.py`, sin cross-importar ese módulo para no romper la
+convención de "un solo archivo" de este script).
+
 **Fase 1 NO compara nada contra el transportista específico** — sólo
 extrae la tarifa de cada código, sea TRFPO o transportista, en filas
 separadas. Cruzar "este código de transportista corresponde a este

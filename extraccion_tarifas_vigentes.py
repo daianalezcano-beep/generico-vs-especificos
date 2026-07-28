@@ -177,6 +177,31 @@ OUTPUT_XLSX = "tarifas_vigentes.xlsx"
 SS_DIR      = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
 
+# Códigos "genéricos" que no son tarifas de transporte real — siempre
+# cargados en 0 a mano, como placeholder (confirmado por la usuaria
+# para 600TRF/700TRF; MINWAT es el mismo caso, visto en las muestras).
+# Se descartan en descubrir_cola ANTES de abrir el producto — ni
+# siquiera se cuenta el tiempo de Selenium en éstos. Editable: agregar
+# el código que haga falta. Mismo criterio que NO_TRANSPORTE en
+# matching_engine.py (Fase 2), pero acá no se importa ese módulo para
+# mantener este script autocontenido en un solo archivo (Colab).
+CODIGOS_EXCLUIR = {"600TRF", "700TRF", "MINWAT"}
+
+# Además del código explícito, se descarta por texto de la descripción
+# (cubre variantes que no estén en CODIGOS_EXCLUIR, ej. TRF19/24/42 —
+# "TR Generico ...").
+PATRONES_EXCLUIR_DESCRIPCION = [
+    re.compile(r'MINERAL\s*WATER', re.I),
+    re.compile(r'^\s*TRANSFER\s*$', re.I),
+    re.compile(r'\bTR\s+GENERICO\b', re.I),
+]
+
+
+def _es_codigo_excluido(codigo, descripcion):
+    if (codigo or "").strip().upper() in CODIGOS_EXCLUIR:
+        return True
+    return any(p.search(descripcion or "") for p in PATRONES_EXCLUIR_DESCRIPCION)
+
 # Rango de fechas a analizar — cada código puede tener varios períodos
 # de RATES cargados (ver DISENO.md sección "Períodos"); se procesan
 # TODOS los que se superponen con este rango, no sólo uno. Formato
@@ -1028,6 +1053,10 @@ def descubrir_cola(driver, comparaciones):
         for supplier, es_generico in suppliers:
             items = listar_codigos_supplier(driver, location, supplier, service_type)
             for item in items:
+                if _es_codigo_excluido(item["codigo"], item.get("descripcion", "")):
+                    print(f"    (excluido, no es transporte real: {item['codigo']} "
+                          f"— {item.get('descripcion', '')!r})")
+                    continue
                 cola.append({
                     "location": location,
                     "supplier": supplier,
