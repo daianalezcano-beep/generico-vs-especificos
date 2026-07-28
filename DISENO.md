@@ -348,6 +348,48 @@ re-scrapear Tourplan. Si se cambia la lógica de matching/gap, replicar
 el cambio en ambos archivos — probado que dan resultados idénticos
 contra los mismos datos reales (208 filas, mismo desglose de banderas).
 
+## Pendiente: desacoplar la extracción de TRFPO de la de cada transportista
+
+Hoy `extraccion_tarifas_vigentes.py` re-extrae TRFPO completo en CADA
+corrida, aunque sólo haya cambiado a qué transportista se lo compara.
+TRFPO es la base compartida entre todas las comparaciones de una misma
+location — y según la usuaria, en la práctica se actualiza sólo 1 o 2
+veces al año (cuando se hace un análisis y revalorización general;
+después queda fijo como costo base). Re-extraer todo su catálogo cada
+vez que se quiere comparar contra un transportista distinto es
+trabajo repetido e innecesario la gran mayoría de las veces.
+
+Dato a tener en cuenta para cuando se implemente: como esta misma
+herramienta ahora da visibilidad de la variación TRFPO-vs-transportista,
+es posible que ese ciclo de "1-2 veces al año" se acorte — no asumir
+que la frecuencia de actualización de TRFPO seguirá siendo tan baja
+para siempre.
+
+Quedaron 3 opciones evaluadas (se descartó explícitamente la de
+acumulación incremental automática por ahora — más piezas móviles y
+más riesgo de comparar en silencio contra datos viejos, mientras el
+proyecto todavía está estabilizando bugs reales corrida tras corrida):
+
+1. **`MODO` por corrida** (recomendada) — mismo patrón que `MODO =
+   "LEER"/"APLICAR"/"COMPLETO"` de `tourplan_valorizacion_pkg_v3.py`:
+   `SOLO_GENERICO` (extrae sólo TRFPO, a un archivo fijo tipo
+   `tarifas_trfpo_BUE.xlsx`) / `SOLO_TRANSPORTISTA` (extrae sólo lo
+   listado, la comparación lee ese archivo + el TRFPO guardado más
+   reciente) / `COMPLETO` (lo de ahora). Control manual y explícito de
+   cuándo refrescar TRFPO — dado que cambia 1-2 veces al año, no hace
+   falta nada automático; encaja bien con esa frecuencia real.
+2. **Acumulación incremental en un solo archivo** — cada corrida suma
+   lo que extrajo a lo que ya había por supplier, sin sobrescribir.
+   Más automático, pero necesita una señal explícita de "forzar
+   refresco" para no arrastrar TRFPO desactualizado sin darse cuenta.
+   Revisar cuando el flujo esté más asentado.
+3. **Listar varios transportistas juntos en `COMPARACIONES`** (costo
+   cero, ya funciona hoy) — dentro de UNA corrida, TRFPO ya se extrae
+   una sola vez sin importar cuántos transportistas se listen (ver
+   `descubrir_cola`). Sólo ayuda si se sabe de antemano contra
+   quiénes se va a comparar; no resuelve agregar un transportista
+   nuevo más adelante sin re-tocar TRFPO.
+
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 
 Validado corriendo `test_matching.py` contra los 3 Product List reales
