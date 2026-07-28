@@ -45,6 +45,30 @@ pendiente — el archivo de config `tabla_bases_vehiculo_pax.csv` está
 armado por si hace falta ahí (Fase 3 terminó sin necesitarlo, ver esa
 sección).
 
+## Corrección a BRIEF.md: los sufijos de código SÍ están estandarizados
+
+`BRIEF.md` (sección "Problema técnico central: matching de códigos")
+dice que el sufijo de cada código específico de transportista "no está
+estandarizado entre transportistas" (ej. `EZHT19`/`EZHT24`/`EZHT42` en
+uno, `EZHTAU` en otro). Aclaración de la usuaria: eso describe mal la
+causa — los sufijos SÍ están estandarizados (mismo significado siempre:
+"19"=Sprinter 19, "24"=Minibus 24, "42"=Bus, "AU"=Auto, etc.). Lo que
+varía es que no todos los transportistas tienen la misma flota, así que
+cada uno usa sólo el subconjunto de sufijos de los vehículos que
+efectivamente tiene — no es que el mismo sufijo signifique otra cosa
+según el transportista.
+
+No cambia nada del código: el motor de matching (`matching_engine.py`,
+`mejor_prefijo_trfpo`) nunca decodificó el sufijo para el matching en sí
+(matchea por prefijo de código, sin mirar qué significa el sufijo) ni
+para el vehículo (lo parsea de `Description`, no del código) — sigue
+siendo la estrategia correcta con esta aclaración, no hacía falta un
+diccionario de sufijos para nada de lo ya construido. Sí es útil como
+contexto para entender los `SIN_MATCH`/huecos de cobertura que aparecen
+en los datos reales: si un transportista no tiene, por ejemplo, un Bus
+en su flota, directamente no va a existir ningún código suyo con sufijo
+"42" para esa ruta — no es un error de carga ni de matching.
+
 ## Reuso de las herramientas hermanas
 
 Dos repos hermanos ya tienen automatización real de Selenium contra
