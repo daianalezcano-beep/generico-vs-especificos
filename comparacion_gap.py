@@ -56,6 +56,13 @@ def _parsear_fecha(txt):
         return None
 
 
+def _r2(x):
+    """Redondeo defensivo a 2 decimales — el Excel de entrada puede
+    traer más decimales si viene de una división (ej. conversión ARS
+    con un tipo de cambio no redondo)."""
+    return round(x, 2) if pd.notna(x) else None
+
+
 def _dias_superposicion(desde1, hasta1, desde2, hasta2):
     """Días de superposición entre dos rangos de fechas. 0 (no
     negativo) si no se superponen o si falta alguna fecha — para poder
@@ -69,6 +76,11 @@ def _dias_superposicion(desde1, hasta1, desde2, hasta2):
 
 def cargar_tarifas(path):
     df = pd.read_excel(path)
+    # Descarta el catch-all de pax abierto hacia arriba (ej. "42-9999
+    # AD", siempre 0) — defensivo, por si el Excel de entrada viene de
+    # una corrida vieja de extraccion_tarifas_vigentes.py que todavía
+    # no filtraba esto en el origen.
+    df = df[df["PAX_HASTA"] != 9999].reset_index(drop=True)
     df["_PERIODO_DESDE_DT"] = df["PERIODO_DESDE"].apply(_parsear_fecha)
     df["_PERIODO_HASTA_DT"] = df["PERIODO_HASTA"].apply(_parsear_fecha)
     return df
@@ -97,7 +109,7 @@ def construir_comparacion(df):
                 "PAX_HASTA": fila_t["PAX_HASTA"],
                 "PERIODO_DESDE": fila_t["PERIODO_DESDE"],
                 "PERIODO_HASTA": fila_t["PERIODO_HASTA"],
-                "TARIFA_TRANSPORTISTA_USD": fila_t["TARIFA_USD"],
+                "TARIFA_TRANSPORTISTA_USD": _r2(fila_t["TARIFA_USD"]),
             }
 
             mejor, candidatos = mejor_prefijo_trfpo(codigo_t, codigos_trfpo)
@@ -133,11 +145,11 @@ def construir_comparacion(df):
                                     fila_trfpo["_PERIODO_DESDE_DT"], fila_trfpo["_PERIODO_HASTA_DT"]) == 0:
                 flags.append("SIN_SUPERPOSICION_DE_PERIODO")
 
-            tarifa_trfpo = fila_trfpo["TARIFA_USD"]
-            tarifa_transp = fila_t["TARIFA_USD"]
+            tarifa_trfpo = _r2(fila_trfpo["TARIFA_USD"])
+            tarifa_transp = _r2(fila_t["TARIFA_USD"])
             diff_usd = diff_pct = None
             if pd.notna(tarifa_trfpo) and pd.notna(tarifa_transp):
-                diff_usd = tarifa_transp - tarifa_trfpo
+                diff_usd = round(tarifa_transp - tarifa_trfpo, 2)
                 if tarifa_trfpo:
                     diff_pct = round((tarifa_transp / tarifa_trfpo - 1) * 100, 2)
             else:

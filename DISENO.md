@@ -348,6 +348,35 @@ re-scrapear Tourplan. Si se cambia la lógica de matching/gap, replicar
 el cambio en ambos archivos — probado que dan resultados idénticos
 contra los mismos datos reales (208 filas, mismo desglose de banderas).
 
+## Limpieza de salida: descartar catch-all 9999 y redondear a 2 decimales
+
+A pedido de la usuaria, sobre datos reales (948 filas en
+`tarifas_vigentes.xlsx`, 220 con `PAX_HASTA=9999`; 208 filas en
+`comparacion_gap.xlsx`, 104 con ese mismo catch-all):
+
+1. **Se descartan las filas con `PAX_HASTA=9999`** directamente en
+   `_extraer_filas_ad` (Fase 1) — ya no llegan ni a `tarifas_vigentes.xlsx`
+   ni, por lo tanto, a la comparación. No es sólo estético: comparar el
+   catch-all del transportista (siempre 0, ej. un Auto no aplica más
+   allá de 2 pax) contra el catch-all real de TRFPO producía filas
+   `DIFERENCIA_PCT=-100%` sin ningún sentido de negocio (visto en los
+   datos reales: 104 de las 208 filas de `comparacion_gap.xlsx` eran
+   esto). `comparacion_gap.py` standalone también filtra esto al cargar
+   el Excel (defensivo, por si se le pasa un `tarifas_vigentes.xlsx` de
+   una corrida vieja que todavía no aplicaba este filtro en origen).
+2. **Redondeo a 2 decimales** en todos los montos: `_extraer_filas_ad`
+   redondea la tarifa apenas se parsea, `convertir_a_usd` redondea el
+   resultado de la división (evita el arrastre de decimales tipo
+   `113.3333333333333` de una conversión ARS→USD), y `DIFERENCIA_USD`
+   se redondea al calcularse (`DIFERENCIA_PCT` ya se redondeaba desde
+   antes). Aplicado en `extraccion_tarifas_vigentes.py` Y en
+   `comparacion_gap.py` (con un helper `_r2` ahí, ya que ese archivo
+   lee montos ya calculados desde el Excel en vez de calcularlos).
+
+Probado contra los datos reales de la usuaria: 948→728 filas en
+tarifas vigentes, 208→104 en la comparación, decimales limpios (ej.
+`93.3333333333333` → `93.33`).
+
 ## Pendiente: desacoplar la extracción de TRFPO de la de cada transportista
 
 Hoy `extraccion_tarifas_vigentes.py` re-extrae TRFPO completo en CADA

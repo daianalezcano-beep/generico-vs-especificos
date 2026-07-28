@@ -1013,13 +1013,19 @@ def _extraer_filas_ad(tabla, codigo, moneda_periodo=""):
         m = pat_rango.search(svc)
         if not (m and re.search(r'\bAD\b', svc.upper())):
             continue
+        pax_hasta = int(m.group(2))
+        if pax_hasta == 9999:
+            # Catch-all de pax abierto hacia arriba (ej. "42-9999 AD")
+            # — confirmado por la usuaria que siempre da 0, no aporta
+            # nada a la comparación y sólo infla la cantidad de filas.
+            continue
         raw = row["inputs"][0] if (row["inputs"] and row["inputs"][0]) else (
             celdas[idx_cost] if idx_cost < len(celdas) else "")
         valor = _parsear_numero(raw)
         out.append({
             "pax_desde": int(m.group(1)),
-            "pax_hasta": int(m.group(2)),
-            "tarifa": valor,
+            "pax_hasta": pax_hasta,
+            "tarifa": round(valor, 2) if valor is not None else None,
             "moneda": moneda,
         })
     return out
@@ -1154,9 +1160,9 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
     if tarifa is None or not moneda:
         return None
     if moneda == "USD":
-        return tarifa
+        return round(tarifa, 2)
     if moneda == "ARS":
-        return tarifa / tipo_cambio if tipo_cambio else None
+        return round(tarifa / tipo_cambio, 2) if tipo_cambio else None
     return None
 
 
@@ -1255,7 +1261,7 @@ def construir_comparacion_gap(filas):
             tarifa_transp = ft["TARIFA_USD"]
             diff_usd = diff_pct = None
             if tarifa_trfpo is not None and tarifa_transp is not None:
-                diff_usd = tarifa_transp - tarifa_trfpo
+                diff_usd = round(tarifa_transp - tarifa_trfpo, 2)
                 if tarifa_trfpo:
                     diff_pct = round((tarifa_transp / tarifa_trfpo - 1) * 100, 2)
             else:
