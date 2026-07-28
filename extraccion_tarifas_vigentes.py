@@ -592,30 +592,14 @@ def buscar_producto(driver, location, supplier, codigo, service_type=None):
             f"(menú visto: {menu_items}) — codigo={codigo!r}")
 
 
-def listar_codigos_supplier(driver, location, supplier, service_type=None):
-    """Busca Location/Supplier(/ServiceType) en Product Search SIN
-    código (deja ese campo vacío) y devuelve TODOS los resultados de la
-    grilla como lista de {codigo, descripcion} — a diferencia de
-    buscar_producto, que abre un único resultado puntual. Es lo que le
-    permite a este script no necesitar ningún CSV/Excel de entrada: le
-    alcanza con (location, supplier) — ver COMPARACIONES.
-
-    Columna de código identificada por HEADER de la tabla (el `th` cuyo
-    texto es "Code", no cualquier celda corta que "parezca" un código —
-    eso confundía la columna Location, ej. "BUE", con el código real).
-    Si no encuentra un header que matchee, avisa con los headers vistos
-    en vez de adivinar. Tampoco maneja paginación todavía: si la grilla
-    pagina resultados sólo se lee la página visible y se avisa por
-    consola."""
-    location = str(location).strip() if location not in (None, "") else ""
-    supplier = str(supplier).strip() if supplier not in (None, "") else ""
-    print(f"\n  📋 Listando códigos: {location}/{supplier}"
-          f"{('/' + service_type.upper()) if service_type else ''}")
-
-    _completar_filtros_busqueda(driver, location, supplier, "", service_type)
-    ss(driver, f"listado_{supplier[:15]}")
-
-    resultado = driver.execute_script(r"""
+def _scrapear_pagina_resultados(driver):
+    """Lee la página de resultados de Product Search actualmente
+    visible: {items: [{codigo, descripcion}], paginado, total_filas,
+    headers}. Columna de código identificada por HEADER de la tabla
+    (el `th` cuyo texto es "Code", no cualquier celda corta que
+    "parezca" un código — eso confundía la columna Location, ej.
+    "BUE", con el código real)."""
+    return driver.execute_script(r"""
         var tables = Array.from(document.querySelectorAll('table'));
         var target = null, headers = [];
         for (var t of tables){
@@ -659,18 +643,83 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
         return {items: out, paginado: paginado, total_filas: rows.length, headers: headers};
     """)
 
-    if not resultado or not resultado.get("items"):
+
+def _pasar_pagina_siguiente(driver):
+    """Intenta avanzar a la próxima página de resultados. SIN
+    CONFIRMAR contra el DOM real todavía (hallazgo pendiente de
+    verificar: TRFPO en una corrida real devolvió sólo 22 códigos, un
+    número sospechosamente redondo para ser el catálogo completo — ver
+    DISENO.md). Heurística genérica: busca un control visible de
+    "siguiente" (texto/aria-label con "next"/"siguiente"/">") dentro de
+    algo con pinta de paginador, que no esté deshabilitado. Devuelve
+    True si encontró y clickeó uno, False si no hay más páginas."""
+    return bool(driver.execute_script(r"""
+        function vis(e){ return !!(e && (e.offsetWidth||e.offsetHeight||e.getClientRects().length)); }
+        var candidatos = Array.from(document.querySelectorAll(
+            "[class*='pagin' i] button, [class*='pager' i] button, " +
+            "[class*='pagin' i] a, [class*='pager' i] a, " +
+            "button[aria-label*='next' i], a[aria-label*='next' i]"
+        )).filter(vis);
+        var btn = candidatos.find(function(b){
+            var t = (b.getAttribute('aria-label') || b.innerText || b.title || '').toLowerCase().trim();
+            var deshabilitado = b.disabled || b.classList.contains('disabled') ||
+                                 b.getAttribute('aria-disabled') === 'true';
+            return !deshabilitado && (/next|siguiente/.test(t) || t === '>' || t === '»');
+        });
+        if (!btn) return false;
+        btn.click();
+        return true;
+    """))
+
+
+def listar_codigos_supplier(driver, location, supplier, service_type=None):
+    """Busca Location/Supplier(/ServiceType) en Product Search SIN
+    código (deja ese campo vacío) y devuelve TODOS los resultados —
+    recorriendo TODAS las páginas si la grilla pagina — como lista de
+    {codigo, descripcion}. Es lo que le permite a este script no
+    necesitar ningún CSV/Excel de entrada: le alcanza con (location,
+    supplier) — ver COMPARACIONES."""
+    location = str(location).strip() if location not in (None, "") else ""
+    supplier = str(supplier).strip() if supplier not in (None, "") else ""
+    print(f"\n  📋 Listando códigos: {location}/{supplier}"
+          f"{('/' + service_type.upper()) if service_type else ''}")
+
+    _completar_filtros_busqueda(driver, location, supplier, "", service_type)
+    ss(driver, f"listado_{supplier[:15]}")
+
+    items_por_codigo = {}
+    headers_vistos = []
+    MAX_PAGINAS = 50
+    for pagina in range(1, MAX_PAGINAS + 1):
+        resultado = _scrapear_pagina_resultados(driver)
+        if not resultado:
+            break
+        headers_vistos = resultado.get("headers") or headers_vistos
+        nuevos = 0
+        for item in resultado.get("items", []):
+            if item["codigo"] not in items_por_codigo:
+                items_por_codigo[item["codigo"]] = item
+                nuevos += 1
+        print(f"    página {pagina}: {len(resultado.get('items', []))} códigos "
+              f"({nuevos} nuevos, {len(items_por_codigo)} acumulados)")
+
+        if nuevos == 0 and pagina > 1:
+            break
+        if not _pasar_pagina_siguiente(driver):
+            break
+        time.sleep(2 * VELOCIDAD)
+    else:
+        print(f"    ⚠ Llegué al tope de {MAX_PAGINAS} páginas para {location}/{supplier} "
+              f"— puede haber más códigos sin leer, revisar a mano.")
+
+    if not items_por_codigo:
         dump(driver, f"listado_vacio_{supplier[:15]}")
         print(f"    ⚠ No encontré resultados para {location}/{supplier} "
-              f"(headers vistos: {resultado.get('headers') if resultado else '?'})")
+              f"(headers vistos: {headers_vistos})")
         return []
-    if resultado.get("paginado"):
-        print(f"    ⚠ La grilla parece tener paginación (detecté un elemento con "
-              f"clase 'pagin'/'pager') — sólo se leyó la página visible "
-              f"({len(resultado['items'])} códigos). Revisar {SS_DIR}/listado_{supplier[:15]}*.png")
-    print(f"    → {len(resultado['items'])} códigos encontrados "
-          f"(headers: {resultado.get('headers')})")
-    return resultado["items"]
+    print(f"    → {len(items_por_codigo)} códigos encontrados en total "
+          f"(headers: {headers_vistos})")
+    return list(items_por_codigo.values())
 
 
 # ── Períodos de RATES (REUTILIZADO tal cual de

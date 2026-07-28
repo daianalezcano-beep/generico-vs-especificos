@@ -133,6 +133,29 @@ la celda de código de la celda de descripción en la grilla de
 resultados, y su detección de paginación, son las que más probablemente
 necesiten ajuste contra el DOM real.
 
+## Paginación en listar_codigos_supplier (sospecha fuerte, no confirmada)
+
+Corriendo `comparacion_gap.py` (ver más abajo) contra datos reales:
+TRFPO devolvió sólo **22 códigos** en BUE, y de los 52 códigos de
+6HOUS1, **172 de 208 filas** no encontraron ningún prefijo TRFPO — pero
+mirando los códigos uno por uno, la mayoría SON rutas de transporte
+normales (`EZHTAU`, `HTAEAU`, `HRDAU`, `FARAU`, etc.) que en las
+muestras (`muestras/Product_List_TRFPO.csv`) sí tienen su TRFPO
+correspondiente (`EZHT`, `HTAE`, `HRD`, `FAR`...). 22 es un número
+sospechosamente redondo para ser el catálogo completo de TRFPO en BUE
+— la hipótesis más probable es que la grilla de resultados pagina, y
+`listar_codigos_supplier` sólo estaba leyendo la primera página.
+
+Se agregó manejo de paginación (`_pasar_pagina_siguiente` +
+`_scrapear_pagina_resultados` en loop, acumulando por código hasta que
+no aparecen códigos nuevos o no hay botón de "siguiente"). **El
+selector del botón de paginación NO está confirmado contra el DOM
+real** — es una heurística genérica (texto/aria-label con
+"next"/"siguiente"/">" dentro de algo con clase "pagin"/"pager", no
+deshabilitado). Verificar en la próxima corrida si ahora TRFPO trae
+más de 22 códigos; si sigue en 22, revisar si el heurístico de
+"siguiente" no está encontrando el botón real de Tourplan.
+
 ## Períodos y Price Code
 
 **Hallazgo real de la primera corrida**: abrir RATES no muestra
@@ -240,6 +263,53 @@ es el DECIMAL por cuál aparece más a la derecha del string, y descarta
 el otro como separador de miles — soporta tanto `"205.18"` (USD) como
 `"45.320,00"` (ARS) sin necesitar saber de antemano en qué moneda está
 cada celda.
+
+## Fase 3 — comparación de gap (`comparacion_gap.py`)
+
+A pedido de la usuaria: matchear los códigos de TRFPO y de cada
+transportista para comparar la variación. Toma `tarifas_vigentes.xlsx`
+(salida de Fase 1) y produce `comparacion_gap.xlsx` — una fila por cada
+(código de transportista, rango de pax, período), con su TRFPO
+correspondiente y la diferencia (`DIFERENCIA_USD`, `DIFERENCIA_PCT`).
+
+**Diseño más simple de lo que planteaba el `BRIEF.md` original**: el
+brief pensaba este cruce ANTES de tener rangos de pax reales leídos de
+Tourplan — proponía inferir vehículo/pax por regex de `Description` y
+cruzar contra `tabla_bases_vehiculo_pax.csv`. Pero Fase 1 ya trae el
+`PAX_DESDE`/`PAX_HASTA` real de cada código directo de la grilla de
+RATES — no hace falta re-derivarlo. El único cruce que hace Fase 3 es:
+
+1. Código de transportista → código TRFPO: longest-prefix-match,
+   reusando tal cual `mejor_prefijo_trfpo` de `matching_engine.py`
+   (Fase 2) — sin re-implementar la lógica de matching en un segundo
+   lugar.
+2. De las filas de ESE código TRFPO, la que tenga rango de pax
+   superpuesto Y máxima superposición de fechas de período con la fila
+   del transportista (dos supplier pueden tener sus períodos cargados
+   con fechas distintas — ver ejemplo real: TRFPO `01/04/2026-
+   31/08/2026` de un solo tramo vs. 6HOUS1 con dos períodos,
+   `01/01/2026-31/07/2026` y `01/08/2026-31/08/2026`, para la misma
+   ruta).
+3. Gap en USD: `TARIFA_USD` de ambos lados ya viene normalizado por
+   Fase 1, así que la resta/porcentaje es directa sin reconversión.
+
+Banderas de salida: `SIN_MATCH_TRFPO` (código de transportista sin
+ningún TRFPO cuyo prefijo matchee), `COLISION_REVISAR` (más de un
+candidato TRFPO — mismo caso que Fase 2), `SIN_TRFPO_PARA_ESE_PAX`
+(hay TRFPO pero ningún rango de pax de ese código cubre el pax del
+transportista), `SIN_SUPERPOSICION_DE_PERIODO` (se encontró un TRFPO
+igual pero sus fechas no se superponen con las del transportista — la
+comparación se hace de todos modos con la fila más cercana, marcada
+para revisión), `SIN_TARIFA_USD_PARA_COMPARAR` (a alguno de los dos
+lados le falta `TARIFA_USD`, ej. por falta de tipo de cambio).
+
+**Probado contra datos reales** (el `tarifas_vigentes.xlsx` que subió
+la usuaria, TRFPO+6HOUS1): reveló el problema de paginación de arriba
+— con sólo 22 códigos TRFPO discutido, 172/208 filas de 6HOUS1 salían
+`SIN_MATCH_TRFPO` que en realidad debían matchear. No es un bug de
+`comparacion_gap.py` en sí — depende enteramente de que Fase 1 haya
+descubierto TODOS los códigos TRFPO. Repetir la comparación después de
+una corrida de Fase 1 con la paginación corregida.
 
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 
