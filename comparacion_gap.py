@@ -34,6 +34,7 @@ import sys
 from datetime import datetime
 
 import pandas as pd
+from openpyxl import load_workbook
 
 from matching_engine import mejor_prefijo_trfpo
 
@@ -178,12 +179,32 @@ def construir_comparacion(df):
     return pd.DataFrame(filas_salida, columns=COLS_SALIDA)
 
 
+def _formatear_columna_porcentaje(path_xlsx, nombre_columna):
+    """Aplica formato de número con signo % (visual, sin multiplicar
+    por 100 — DIFERENCIA_PCT ya está en escala porcentual, ej. -44.76
+    significa -44.76%, no -0.4476) a una columna del Excel ya guardado.
+    pandas.to_excel no permite formato por celda directamente, así que
+    se reabre con openpyxl para aplicarlo y se vuelve a guardar."""
+    wb = load_workbook(path_xlsx)
+    hoja = wb.active
+    headers = [c.value for c in hoja[1]]
+    if nombre_columna not in headers:
+        return
+    idx = headers.index(nombre_columna) + 1
+    for fila in hoja.iter_rows(min_row=2, min_col=idx, max_col=idx):
+        for celda in fila:
+            if isinstance(celda.value, (int, float)):
+                celda.number_format = '0.00"%"'
+    wb.save(path_xlsx)
+
+
 def main():
     entrada = sys.argv[1] if len(sys.argv) > 1 else "tarifas_vigentes.xlsx"
     salida = sys.argv[2] if len(sys.argv) > 2 else "comparacion_gap.xlsx"
     df = cargar_tarifas(entrada)
     comparacion = construir_comparacion(df)
     comparacion.to_excel(salida, index=False, sheet_name="COMPARACION_GAP")
+    _formatear_columna_porcentaje(salida, "DIFERENCIA_PCT")
     print(f"{len(comparacion)} filas escritas en {salida}")
 
     con_flags = comparacion[comparacion["FLAGS"] != ""]

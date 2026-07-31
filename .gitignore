@@ -3,4 +3,5 @@ __pycache__/
 screenshots/
 tarifas_vigentes.xlsx
 comparacion_gap.xlsx
+tarifas_trfpo_*.xlsx
 muestras/mapeo_resultado.csv

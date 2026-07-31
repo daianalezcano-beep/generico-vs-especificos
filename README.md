@@ -36,12 +36,20 @@ de la validación contra datos reales.
   final calcula la comparación de gap (Fase 3) automáticamente, todo en
   una sola ejecución. No necesita CSV/Excel de entrada — busca los
   códigos él mismo en Tourplan. Editar `USERNAME`, `PASSWORD`,
-  `COMPARACIONES`, `TIPO_CAMBIO_ARS_USD`, `PERIODO_ANALISIS_DESDE/HASTA`
-  y `PRICE_CODE_DEFAULT` (todo al principio del archivo) antes de
+  `COMPARACIONES`, `TIPO_CAMBIO_ARS_USD`, `PERIODO_ANALISIS_DESDE/HASTA`,
+  `PRICE_CODE_DEFAULT` y `MODO` (todo al principio del archivo) antes de
   correr. `MOSTRAR_CAPTURAS=True` muestra las capturas inline si se
   corre en Colab/Jupyter (opcional). Salida: `tarifas_vigentes.xlsx`
   (una fila por código + período + rango de pax) y
-  `comparacion_gap.xlsx` (el gap TRFPO vs. cada transportista).
+  `comparacion_gap.xlsx` (el gap TRFPO vs. cada transportista, con
+  `DIFERENCIA_PCT` formateado con signo %).
+  - `MODO = "COMPLETO"` (default): extrae genérico + transportistas.
+  - `MODO = "SOLO_GENERICO"`: extrae sólo TRFPO y lo guarda en
+    `tarifas_trfpo_<LOCATION>.xlsx` para reusar después — correr una
+    vez cuando TRFPO cambie (1-2 veces al año), no en cada corrida.
+  - `MODO = "SOLO_TRANSPORTISTA"`: extrae sólo los transportistas
+    listados y arma la comparación contra el TRFPO ya guardado (falla
+    con un error claro si no corriste `SOLO_GENERICO`/`COMPLETO` antes).
 - `comparacion_gap.py` — la misma Fase 3, como script standalone
   (pandas) para re-correr SÓLO la comparación sobre un
   `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.

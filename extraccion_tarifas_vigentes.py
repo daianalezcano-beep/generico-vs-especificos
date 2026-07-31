@@ -152,7 +152,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
 from webdriver_manager.chrome import ChromeDriverManager
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
@@ -178,6 +178,23 @@ OUTPUT_XLSX = "tarifas_vigentes.xlsx"
 OUTPUT_GAP_XLSX = "comparacion_gap.xlsx"
 SS_DIR      = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
+
+# Qué extraer en esta corrida — TRFPO cambia 1-2 veces al año y después
+# queda fijo como costo base (ver DISENO.md), así que no hace falta
+# re-extraer su catálogo completo cada vez que se agrega/cambia un
+# transportista a comparar:
+#   "COMPLETO"          → extrae genérico + transportistas (como antes).
+#   "SOLO_GENERICO"      → extrae sólo TRFPO, lo guarda en
+#                          tarifas_trfpo_<LOCATION>.xlsx para reusar
+#                          después. No calcula comparación (no hay
+#                          transportista todavía).
+#   "SOLO_TRANSPORTISTA" → extrae sólo los "transportistas" listados en
+#                          COMPARACIONES, y arma la comparación contra
+#                          el TRFPO ya guardado (tarifas_trfpo_<LOCATION>.xlsx
+#                          de una corrida SOLO_GENERICO o COMPLETO
+#                          anterior — falla con un error claro si no
+#                          existe todavía).
+MODO = "COMPLETO"
 
 # Códigos "genéricos" que no son tarifas de transporte real — siempre
 # cargados en 0 a mano, como placeholder (confirmado por la usuaria
@@ -1155,17 +1172,25 @@ def leer_tarifa_vigente_componente(driver, codigo):
 
 # ── Cola de trabajo y moneda ─────────────────────────────────────────
 
-def descubrir_cola(driver, comparaciones):
+def descubrir_cola(driver, comparaciones, incluir_generico=True, incluir_transportistas=True):
     """A partir de COMPARACIONES (location + supplier genérico + lista
     de transportistas), busca en Tourplan los códigos vigentes de cada
     supplier (listar_codigos_supplier) y devuelve la cola de trabajo
     completa — un (LOCATION, SUPPLIER, CODIGO, SERVICE_TYPE, ES_GENERICO)
-    por código encontrado. Requiere sesión ya logueada."""
+    por código encontrado. Requiere sesión ya logueada.
+
+    incluir_generico/incluir_transportistas permiten limitar qué se
+    extrae esta corrida (ver MODO) — para no re-extraer TRFPO completo
+    cuando sólo hace falta actualizar un transportista."""
     cola = []
     for comp in comparaciones:
         location = comp["location"]
         service_type = comp.get("service_type", "")
-        suppliers = [(comp["generico"], True)] + [(s, False) for s in comp.get("transportistas", [])]
+        suppliers = []
+        if incluir_generico:
+            suppliers.append((comp["generico"], True))
+        if incluir_transportistas:
+            suppliers += [(s, False) for s in comp.get("transportistas", [])]
         for supplier, es_generico in suppliers:
             items = listar_codigos_supplier(driver, location, supplier, service_type)
             for item in items:
@@ -1182,6 +1207,67 @@ def descubrir_cola(driver, comparaciones):
                     "es_generico": es_generico,
                 })
     return cola
+
+
+COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PERIODO_DESDE", "PERIODO_HASTA",
+                "PRICE_CODE", "PAX_DESDE", "PAX_HASTA", "TARIFA_VIGENTE", "MONEDA",
+                "TARIFA_USD", "LOCATION", "TIMESTAMP"]
+
+
+def _archivo_cache_trfpo(location):
+    return f"tarifas_trfpo_{location}.xlsx"
+
+
+def guardar_cache_trfpo(filas_salida):
+    """Guarda, por location, las filas ES_GENERICO=True de esta corrida
+    en tarifas_trfpo_<LOCATION>.xlsx — para que una corrida futura en
+    MODO=SOLO_TRANSPORTISTA no tenga que re-extraer TRFPO completo (ver
+    DISENO.md, "Pendiente: desacoplar la extracción de TRFPO..."). Se
+    llama siempre que esta corrida haya extraído genérico (COMPLETO o
+    SOLO_GENERICO), pisando el cache anterior de esa location."""
+    por_location = {}
+    for f in filas_salida:
+        if f["ES_GENERICO"]:
+            por_location.setdefault(f["LOCATION"], []).append(f)
+    for location, filas in por_location.items():
+        wb = Workbook()
+        hoja = wb.active
+        hoja.title = "TARIFAS_TRFPO"
+        hoja.append(COLS_TARIFAS)
+        for c in hoja[1]:
+            c.font = Font(bold=True)
+        for fila in filas:
+            hoja.append([fila.get(c, "") for c in COLS_TARIFAS])
+        for i, c in enumerate(COLS_TARIFAS, start=1):
+            hoja.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
+        archivo = _archivo_cache_trfpo(location)
+        wb.save(archivo)
+        print(f"💾 Cache de TRFPO guardado: {archivo} ({len(filas)} filas)")
+
+
+def cargar_cache_trfpo(comparaciones):
+    """Carga tarifas_trfpo_<LOCATION>.xlsx por cada location de
+    COMPARACIONES — usado en MODO=SOLO_TRANSPORTISTA para no re-extraer
+    TRFPO. Falla con un mensaje claro si falta el archivo de alguna
+    location (hace falta haber corrido MODO=SOLO_GENERICO o COMPLETO
+    al menos una vez antes, para esa location)."""
+    filas = []
+    locations = {c["location"] for c in comparaciones}
+    for location in locations:
+        archivo = _archivo_cache_trfpo(location)
+        if not os.path.exists(archivo):
+            raise FileNotFoundError(
+                f"No encontré {archivo}. Con MODO=SOLO_TRANSPORTISTA hace falta "
+                f"haber corrido antes MODO=SOLO_GENERICO (o COMPLETO) al menos "
+                f"una vez para la location {location!r}, así queda guardado el "
+                f"cache de TRFPO que esta corrida necesita.")
+        wb = load_workbook(archivo, data_only=True)
+        filas_hoja = list(wb.active.iter_rows(values_only=True))
+        header = filas_hoja[0]
+        for row in filas_hoja[1:]:
+            filas.append(dict(zip(header, row)))
+        print(f"📂 Cache de TRFPO cargado: {archivo} ({len(filas_hoja) - 1} filas)")
+    return filas
 
 
 def convertir_a_usd(tarifa, moneda, tipo_cambio):
@@ -1326,6 +1412,15 @@ def construir_comparacion_gap(filas):
 # ── Main ──────────────────────────────────────────────────────────
 
 def main():
+    modo = (MODO or "COMPLETO").strip().upper()
+    if modo not in ("SOLO_GENERICO", "SOLO_TRANSPORTISTA", "COMPLETO"):
+        raise ValueError(f"MODO inválido: {MODO!r} — usar SOLO_GENERICO, "
+                          f"SOLO_TRANSPORTISTA o COMPLETO")
+    incluir_generico = modo in ("SOLO_GENERICO", "COMPLETO")
+    incluir_transportistas = modo in ("SOLO_TRANSPORTISTA", "COMPLETO")
+    print(f"MODO={modo} (genérico: {'sí' if incluir_generico else 'no'}, "
+          f"transportistas: {'sí' if incluir_transportistas else 'no'})")
+
     tipo_cambio = TIPO_CAMBIO_ARS_USD
     if tipo_cambio is None:
         print(f"⚠ Sin TIPO_CAMBIO_ARS_USD cargado (constante al principio del "
@@ -1336,7 +1431,7 @@ def main():
     try:
         login(driver)
 
-        cola = descubrir_cola(driver, COMPARACIONES)
+        cola = descubrir_cola(driver, COMPARACIONES, incluir_generico, incluir_transportistas)
         if LIMIT_PRUEBA:
             print(f"\n⚠ LIMIT_PRUEBA={LIMIT_PRUEBA} — procesando sólo los primeros "
                   f"{LIMIT_PRUEBA} códigos de {len(cola)} descubiertos. Poner "
@@ -1380,32 +1475,48 @@ def main():
     finally:
         driver.quit()
 
-    cols = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PERIODO_DESDE", "PERIODO_HASTA",
-            "PRICE_CODE", "PAX_DESDE", "PAX_HASTA", "TARIFA_VIGENTE", "MONEDA",
-            "TARIFA_USD", "LOCATION", "TIMESTAMP"]
     wb = Workbook()
     hoja = wb.active
     hoja.title = "TARIFAS_VIGENTES"
-    hoja.append(cols)
+    hoja.append(COLS_TARIFAS)
     for c in hoja[1]:
         c.font = Font(bold=True)
     for fila in filas_salida:
-        hoja.append([fila.get(c, "") for c in cols])
-    for i, c in enumerate(cols, start=1):
+        hoja.append([fila.get(c, "") for c in COLS_TARIFAS])
+    for i, c in enumerate(COLS_TARIFAS, start=1):
         hoja.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
     wb.save(OUTPUT_XLSX)
     print(f"\n✅ {len(filas_salida)} filas escritas en {OUTPUT_XLSX}")
 
+    if incluir_generico:
+        guardar_cache_trfpo(filas_salida)
+
+    if modo == "SOLO_GENERICO":
+        print("\nMODO=SOLO_GENERICO: no se calcula comparación de gap en esta "
+              "corrida (no se extrajo ningún transportista). Corré "
+              "MODO=SOLO_TRANSPORTISTA para comparar contra alguno usando este "
+              "cache de TRFPO.")
+        return
+
+    filas_para_comparacion = filas_salida
+    if modo == "SOLO_TRANSPORTISTA":
+        filas_para_comparacion = cargar_cache_trfpo(COMPARACIONES) + filas_salida
+
     print("\n🔄 Calculando comparación de gap (Fase 3)...")
-    comparacion = construir_comparacion_gap(filas_salida)
+    comparacion = construir_comparacion_gap(filas_para_comparacion)
     wb_gap = Workbook()
     hoja_gap = wb_gap.active
     hoja_gap.title = "COMPARACION_GAP"
     hoja_gap.append(COLS_GAP)
     for c in hoja_gap[1]:
         c.font = Font(bold=True)
+    idx_pct = COLS_GAP.index("DIFERENCIA_PCT") + 1
     for fila in comparacion:
         hoja_gap.append([fila.get(c, "") for c in COLS_GAP])
+    for fila_excel in hoja_gap.iter_rows(min_row=2, min_col=idx_pct, max_col=idx_pct):
+        for celda in fila_excel:
+            if isinstance(celda.value, (int, float)):
+                celda.number_format = '0.00"%"'
     for i, c in enumerate(COLS_GAP, start=1):
         hoja_gap.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
     wb_gap.save(OUTPUT_GAP_XLSX)

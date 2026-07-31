@@ -29,12 +29,20 @@ cada uno está en su propia sección más abajo.
 Tourplan — misma lógica que la versión embebida, ambas dan resultados
 idénticos contra los mismos datos reales.
 
+**`MODO` (`SOLO_GENERICO`/`SOLO_TRANSPORTISTA`/`COMPLETO`)**: TRFPO ya
+no hace falta re-extraerlo en cada corrida — se guarda en
+`tarifas_trfpo_<LOCATION>.xlsx` y se reusa. Ver "Resuelto: desacoplar
+la extracción de TRFPO...".
+
+**`DIFERENCIA_PCT` con signo %**: visible en el Excel sin cambiar el
+valor guardado. Ver esa sección.
+
 **Pendiente**: Fase 4 (Excel final con el gap resaltado/formateado) sin
-empezar. Backlog de mejoras evaluadas pero no implementadas: desacoplar
-la extracción de TRFPO de la del transportista (ver esa sección), y
-generar una fila por cada período de TRFPO cuando hay más de uno
-superpuesto en vez de sólo el de mayor superposición (ver
-"Visibilidad de qué período se comparó").
+empezar. Backlog restante: generar una fila por cada período de TRFPO
+cuando hay más de uno superpuesto en vez de sólo el de mayor
+superposición (ver "Visibilidad de qué período se comparó"); scroll de
+`listar_codigos_supplier` sigue sin ser 100% confiable de corrida a
+corrida (ver "Scroll virtual").
 
 ## Alcance
 
@@ -405,6 +413,22 @@ sólo un período con 0 días de superposición que quedó ahí por
 descarte), reconsiderar si conviene generar una fila por cada período
 de TRFPO en vez de una sola con el de mayor superposición.
 
+## DIFERENCIA_PCT con signo % visible
+
+`DIFERENCIA_PCT` ya estaba en escala porcentual (ej. `-44.76` significa
+`-44.76%`, no `-0.4476`) — a pedido de la usuaria, ahora se ve como tal
+en el Excel. No se usa el formato "Percentage" nativo de Excel (`0%`)
+porque ESE formato multiplica el valor por 100 al mostrarlo, y
+`DIFERENCIA_PCT` ya viene multiplicado — usarlo mostraría `-4476.00%`.
+Se usa en cambio `0.00"%"` (el `%` entre comillas = texto literal para
+Excel, no el operador de porcentaje) para agregar el signo sin tocar el
+valor. Aplicado en ambos lugares que escriben `comparacion_gap.xlsx`
+(`extraccion_tarifas_vigentes.py` embebido, con `openpyxl` directo; y
+`comparacion_gap.py` standalone, reabriendo con `openpyxl` después de
+`pandas.to_excel` porque pandas no permite formato por celda al
+escribir). Probado contra datos reales: el valor guardado no cambia
+(`-44.77`), sólo cambia cómo se ve (`-44.77%`).
+
 ## Limpieza de salida: descartar catch-all 9999 y redondear a 2 decimales
 
 A pedido de la usuaria, sobre datos reales (948 filas en
@@ -434,47 +458,52 @@ Probado contra los datos reales de la usuaria: 948→728 filas en
 tarifas vigentes, 208→104 en la comparación, decimales limpios (ej.
 `93.3333333333333` → `93.33`).
 
-## Pendiente: desacoplar la extracción de TRFPO de la de cada transportista
+## Resuelto: desacoplar la extracción de TRFPO de la de cada transportista
 
-Hoy `extraccion_tarifas_vigentes.py` re-extrae TRFPO completo en CADA
-corrida, aunque sólo haya cambiado a qué transportista se lo compara.
-TRFPO es la base compartida entre todas las comparaciones de una misma
-location — y según la usuaria, en la práctica se actualiza sólo 1 o 2
-veces al año (cuando se hace un análisis y revalorización general;
-después queda fijo como costo base). Re-extraer todo su catálogo cada
-vez que se quiere comparar contra un transportista distinto es
-trabajo repetido e innecesario la gran mayoría de las veces.
+Antes, `extraccion_tarifas_vigentes.py` re-extraía TRFPO completo en
+CADA corrida, aunque sólo hubiera cambiado a qué transportista se lo
+compara. TRFPO es la base compartida entre todas las comparaciones de
+una misma location — y según la usuaria, en la práctica se actualiza
+sólo 1 o 2 veces al año (cuando se hace un análisis y revalorización
+general; después queda fijo como costo base). Re-extraer todo su
+catálogo cada vez que se agrega un transportista nuevo (la usuaria
+tiene 6-7 para comparar) era trabajo repetido e innecesario.
 
-Dato a tener en cuenta para cuando se implemente: como esta misma
-herramienta ahora da visibilidad de la variación TRFPO-vs-transportista,
-es posible que ese ciclo de "1-2 veces al año" se acorte — no asumir
-que la frecuencia de actualización de TRFPO seguirá siendo tan baja
-para siempre.
+Implementada la opción 1 del backlog anterior (`MODO` por corrida,
+mismo patrón que `MODO = "LEER"/"APLICAR"/"COMPLETO"` de
+`tourplan_valorizacion_pkg_v3.py`):
 
-Quedaron 3 opciones evaluadas (se descartó explícitamente la de
-acumulación incremental automática por ahora — más piezas móviles y
-más riesgo de comparar en silencio contra datos viejos, mientras el
-proyecto todavía está estabilizando bugs reales corrida tras corrida):
+- `MODO = "COMPLETO"` (default): extrae genérico + transportistas,
+  como antes.
+- `MODO = "SOLO_GENERICO"`: extrae sólo TRFPO. `guardar_cache_trfpo`
+  lo guarda en `tarifas_trfpo_<LOCATION>.xlsx` (mismo esquema que
+  `tarifas_vigentes.xlsx`, filtrado a `ES_GENERICO=True`). No calcula
+  comparación esta corrida (no hay transportista todavía).
+- `MODO = "SOLO_TRANSPORTISTA"`: extrae sólo los `"transportistas"` de
+  `COMPARACIONES`. `cargar_cache_trfpo` lee
+  `tarifas_trfpo_<LOCATION>.xlsx` de una corrida `SOLO_GENERICO`/
+  `COMPLETO` anterior (falla con `FileNotFoundError` y mensaje claro si
+  no existe) y arma la comparación con eso + lo recién extraído — sin
+  volver a tocar TRFPO en Tourplan.
 
-1. **`MODO` por corrida** (recomendada) — mismo patrón que `MODO =
-   "LEER"/"APLICAR"/"COMPLETO"` de `tourplan_valorizacion_pkg_v3.py`:
-   `SOLO_GENERICO` (extrae sólo TRFPO, a un archivo fijo tipo
-   `tarifas_trfpo_BUE.xlsx`) / `SOLO_TRANSPORTISTA` (extrae sólo lo
-   listado, la comparación lee ese archivo + el TRFPO guardado más
-   reciente) / `COMPLETO` (lo de ahora). Control manual y explícito de
-   cuándo refrescar TRFPO — dado que cambia 1-2 veces al año, no hace
-   falta nada automático; encaja bien con esa frecuencia real.
-2. **Acumulación incremental en un solo archivo** — cada corrida suma
-   lo que extrajo a lo que ya había por supplier, sin sobrescribir.
-   Más automático, pero necesita una señal explícita de "forzar
-   refresco" para no arrastrar TRFPO desactualizado sin darse cuenta.
-   Revisar cuando el flujo esté más asentado.
-3. **Listar varios transportistas juntos en `COMPARACIONES`** (costo
-   cero, ya funciona hoy) — dentro de UNA corrida, TRFPO ya se extrae
-   una sola vez sin importar cuántos transportistas se listen (ver
-   `descubrir_cola`). Sólo ayuda si se sabe de antemano contra
-   quiénes se va a comparar; no resuelve agregar un transportista
-   nuevo más adelante sin re-tocar TRFPO.
+`guardar_cache_trfpo` se llama siempre que la corrida haya incluido
+genérico (`COMPLETO` o `SOLO_GENERICO`), pisando el cache anterior de
+esa location — así cualquier corrida `COMPLETO` también deja un cache
+fresco disponible para una `SOLO_TRANSPORTISTA` futura, sin tener que
+acordarse de correr `SOLO_GENERICO` a mano la primera vez.
+
+Validado en aislamiento (round-trip de `guardar_cache_trfpo` +
+`cargar_cache_trfpo` contra un Excel real vía openpyxl, sin poder
+correr Selenium en este entorno): el booleano `ES_GENERICO` sobrevive
+el guardado/lectura como `bool` de Python, no como string — confirmado
+antes de dar el cambio por bueno, porque `construir_comparacion_gap`
+filtra con `if f["ES_GENERICO"]:` y un string `"True"`/`"FALSE"` mal
+tipado hubiera roto ese filtro en silencio.
+
+Se descartaron las otras 2 opciones del backlog por ahora (acumulación
+incremental automática: más piezas móviles y riesgo de comparar contra
+datos viejos sin darse cuenta; listar transportistas juntos: no
+resuelve agregar uno nuevo más adelante sin re-tocar TRFPO).
 
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 
