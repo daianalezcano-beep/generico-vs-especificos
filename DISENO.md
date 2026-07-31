@@ -505,6 +505,21 @@ incremental automática: más piezas móviles y riesgo de comparar contra
 datos viejos sin darse cuenta; listar transportistas juntos: no
 resuelve agregar uno nuevo más adelante sin re-tocar TRFPO).
 
+**Caveat real de Colab, encontrado al pensar el caso de uso real de la
+usuaria** ("corro SOLO_GENERICO hoy, SOLO_TRANSPORTISTA la semana que
+viene, porque sé que TRFPO no cambió"): el disco de una sesión de Colab
+NO persiste entre runtimes distintos — `tarifas_trfpo_<LOCATION>.xlsx`
+escrito hoy desaparece si la sesión de Colab de la semana que viene es
+una nueva (lo normal, dado que TRFPO se mantiene fijo bastante tiempo
+y las corridas van a estar espaciadas). Se agregó `CACHE_DIR` (default
+`"."`) para poder apuntar el cache a Google Drive montado
+(`/content/drive/MyDrive/...`) en vez de al disco efímero de la sesión,
+con instrucciones de `drive.mount(...)` en el comentario junto a la
+constante. El mensaje de error de `cargar_cache_trfpo` cuando no
+encuentra el archivo menciona esto explícitamente, para que no se lea
+como "no corriste SOLO_GENERICO" cuando en realidad sí se corrió, sólo
+que en otra sesión de Colab sin Drive montado.
+
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 
 Validado corriendo `test_matching.py` contra los 3 Product List reales

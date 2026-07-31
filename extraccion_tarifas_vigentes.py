@@ -196,6 +196,19 @@ os.makedirs(SS_DIR, exist_ok=True)
 #                          existe todavía).
 MODO = "COMPLETO"
 
+# Carpeta donde se guarda/lee tarifas_trfpo_<LOCATION>.xlsx (el cache
+# de TRFPO). Por default "." (la carpeta donde corre el script) —
+# ATENCIÓN si esto corre en Google Colab: el disco de la sesión de
+# Colab NO persiste entre sesiones distintas (se pierde al
+# desconectarse el runtime). Si vas a correr SOLO_GENERICO un día y
+# SOLO_TRANSPORTISTA días/semanas después (el caso normal, dado que
+# TRFPO se mantiene fijo bastante tiempo), montá Google Drive primero
+# y apuntá esto ahí para que el cache sobreviva entre sesiones:
+#   from google.colab import drive
+#   drive.mount('/content/drive')
+#   CACHE_DIR = "/content/drive/MyDrive/generico-vs-especificos"
+CACHE_DIR = "."
+
 # Códigos "genéricos" que no son tarifas de transporte real — siempre
 # cargados en 0 a mano, como placeholder (confirmado por la usuaria
 # para 600TRF/700TRF; MINWAT es el mismo caso, visto en las muestras).
@@ -1215,7 +1228,7 @@ COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PERIODO_DESDE", "PER
 
 
 def _archivo_cache_trfpo(location):
-    return f"tarifas_trfpo_{location}.xlsx"
+    return os.path.join(CACHE_DIR, f"tarifas_trfpo_{location}.xlsx")
 
 
 def guardar_cache_trfpo(filas_salida):
@@ -1225,6 +1238,8 @@ def guardar_cache_trfpo(filas_salida):
     DISENO.md, "Pendiente: desacoplar la extracción de TRFPO..."). Se
     llama siempre que esta corrida haya extraído genérico (COMPLETO o
     SOLO_GENERICO), pisando el cache anterior de esa location."""
+    if CACHE_DIR not in (".", ""):
+        os.makedirs(CACHE_DIR, exist_ok=True)
     por_location = {}
     for f in filas_salida:
         if f["ES_GENERICO"]:
@@ -1260,7 +1275,11 @@ def cargar_cache_trfpo(comparaciones):
                 f"No encontré {archivo}. Con MODO=SOLO_TRANSPORTISTA hace falta "
                 f"haber corrido antes MODO=SOLO_GENERICO (o COMPLETO) al menos "
                 f"una vez para la location {location!r}, así queda guardado el "
-                f"cache de TRFPO que esta corrida necesita.")
+                f"cache de TRFPO que esta corrida necesita. Si esto corre en "
+                f"Colab y CACHE_DIR='.' (default), el archivo se pierde entre "
+                f"sesiones distintas del runtime — montá Google Drive y apuntá "
+                f"CACHE_DIR ahí para que el cache sobreviva de una sesión a otra "
+                f"(ver comentario junto a CACHE_DIR al principio del script).")
         wb = load_workbook(archivo, data_only=True)
         filas_hoja = list(wb.active.iter_rows(values_only=True))
         header = filas_hoja[0]

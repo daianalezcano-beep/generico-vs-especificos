@@ -50,6 +50,12 @@ de la validación contra datos reales.
   - `MODO = "SOLO_TRANSPORTISTA"`: extrae sólo los transportistas
     listados y arma la comparación contra el TRFPO ya guardado (falla
     con un error claro si no corriste `SOLO_GENERICO`/`COMPLETO` antes).
+  - ⚠️ Si corrés esto en **Google Colab** y vas a usar `SOLO_GENERICO`
+    un día y `SOLO_TRANSPORTISTA` en una sesión posterior (el caso
+    normal, ya que TRFPO se mantiene fijo bastante tiempo): el disco de
+    Colab no persiste entre sesiones. Montá Google Drive y apuntá
+    `CACHE_DIR` ahí (ver comentario junto a esa constante en el
+    script) para que `tarifas_trfpo_<LOCATION>.xlsx` sobreviva.
 - `comparacion_gap.py` — la misma Fase 3, como script standalone
   (pandas) para re-correr SÓLO la comparación sobre un
   `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.
