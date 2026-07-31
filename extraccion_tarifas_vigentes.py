@@ -693,6 +693,7 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
     items_por_codigo = {}
     headers_vistos = []
     MAX_INTENTOS = 300
+    UMBRAL_SIN_NUEVOS = 5
     intentos_sin_nuevos = 0
     for intento in range(1, MAX_INTENTOS + 1):
         resultado = _scrapear_pagina_resultados(driver)
@@ -711,17 +712,48 @@ def listar_codigos_supplier(driver, location, supplier, service_type=None):
         else:
             intentos_sin_nuevos += 1
 
-        # 3 scrolls seguidos sin nada nuevo = asumimos que llegamos al
-        # final (margen por si el scroll virtual tarda en renderizar).
-        if intentos_sin_nuevos >= 3:
+        # UMBRAL_SIN_NUEVOS scrolls seguidos sin nada nuevo = asumimos
+        # que llegamos al final. Subido de 3 a 5 tras un caso real
+        # donde la lista quedó corta (HTHT/HTMP/NEZH de TRFPO no se
+        # descubrieron en una corrida, sí en otra) — el scroll virtual
+        # a veces tarda más en renderizar de lo esperado, sin garantía
+        # firme; más margen reduce el riesgo de cortar temprano.
+        if intentos_sin_nuevos >= UMBRAL_SIN_NUEVOS:
             break
         if not _hacer_scroll_resultados(driver):
-            if intentos_sin_nuevos >= 1:
+            if intentos_sin_nuevos >= 2:
                 break
-        time.sleep(1 * VELOCIDAD)
+        time.sleep(1.5 * VELOCIDAD)
     else:
         print(f"    ⚠ Llegué al tope de {MAX_INTENTOS} scrolls para "
               f"{location}/{supplier} — puede haber más códigos sin leer.")
+
+    # Pasada final defensiva: saltar directo al fondo del contenedor
+    # (scrollHeight, no +clientHeight) y releer una vez más, por si el
+    # loop incremental de arriba cortó antes de llegar al final real.
+    driver.execute_script("""
+        var fila = document.querySelector('table tbody tr');
+        if (!fila) return;
+        var cur = fila.closest('table');
+        while (cur && cur !== document.body){
+            if (cur.scrollHeight > cur.clientHeight + 5){ cur.scrollTop = cur.scrollHeight; return; }
+            cur = cur.parentElement;
+        }
+    """)
+    time.sleep(2 * VELOCIDAD)
+    resultado_final = _scrapear_pagina_resultados(driver)
+    if resultado_final:
+        headers_vistos = resultado_final.get("headers") or headers_vistos
+        nuevos_final = 0
+        for item in resultado_final.get("items", []):
+            if item["codigo"] not in items_por_codigo:
+                items_por_codigo[item["codigo"]] = item
+                nuevos_final += 1
+        if nuevos_final:
+            print(f"    ⚠ Pasada final (scroll directo al fondo) encontró "
+                  f"{nuevos_final} códigos que el loop incremental se había "
+                  f"salteado — revisar VELOCIDAD/UMBRAL_SIN_NUEVOS si esto "
+                  f"se repite seguido.")
 
     if not items_por_codigo:
         dump(driver, f"listado_vacio_{supplier[:15]}")

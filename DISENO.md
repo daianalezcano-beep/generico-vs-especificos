@@ -155,6 +155,30 @@ columna "CODE" ya implementada (match exacto, sin necesitar el
 fallback heurístico). **Confirmado en la corrida siguiente**: TRFPO
 pasó de 22 a 116 códigos en BUE.
 
+**El scroll virtual sigue sin ser 100% confiable de corrida a
+corrida** — hallazgo posterior: en otra corrida, TRFPO no descubrió
+`HTHT`/`HTMP`/`NEZH` (confirmados como códigos TRFPO reales en
+`muestras/Product_List_TRFPO.csv`), a pesar de que una corrida anterior
+sí había llegado a códigos parecidos. No es un problema del matching
+(`"HTHTAU".startswith("HTHT")` es trivialmente correcto) — es que esos
+códigos directamente no estaban en la lista que devolvió
+`listar_codigos_supplier` esa vez. Hipótesis: el umbral de "3 scrolls
+seguidos sin nada nuevo" cortaba la búsqueda antes de tiempo si el
+scroll virtual tardaba más de lo esperado en renderizar filas nuevas
+(dependiente de latencia/timing, no determinístico).
+
+Mitigado (sin poder confirmar que sea 100% suficiente sin otra corrida
+real): el umbral subió de 3 a 5 scrolls seguidos sin novedad, el sleep
+entre scrolls subió de 1s a 1.5s, y se agregó una pasada final
+defensiva que salta directo a `scrollHeight` (el fondo real del
+contenedor, no `+clientHeight` incremental) y relee una vez más
+después de que el loop principal termina — por si el loop incremental
+igual cortó antes de llegar al final. Si esto se sigue repitiendo,
+convendría verificar con la usuaria si hay una forma más determinística
+de saber "llegué al final" (ej. un contador de resultados visible en
+algún lado de la pantalla de Product Search) en vez de inferirlo por
+scrolls sin novedad.
+
 ## Períodos y Price Code
 
 **Hallazgo real de la primera corrida**: abrir RATES no muestra
