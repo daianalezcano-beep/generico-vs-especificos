@@ -202,12 +202,10 @@ MODO = "COMPLETO"
 # Colab NO persiste entre sesiones distintas (se pierde al
 # desconectarse el runtime). Si vas a correr SOLO_GENERICO un día y
 # SOLO_TRANSPORTISTA días/semanas después (el caso normal, dado que
-# TRFPO se mantiene fijo bastante tiempo), montá Google Drive primero
-# y apuntá esto ahí para que el cache sobreviva entre sesiones:
-#   from google.colab import drive
-#   drive.mount('/content/drive')
-#   CACHE_DIR = "/content/drive/MyDrive/generico-vs-especificos"
-CACHE_DIR = "."
+# TRFPO se mantiene fijo bastante tiempo), poné acá una ruta de Google
+# Drive — el script monta Drive solo (_montar_drive_si_corresponde),
+# no hace falta un drive.mount(...) manual en otra celda:
+CACHE_DIR = "."  # ej. "/content/drive/MyDrive/generico-vs-especificos"
 
 # Códigos "genéricos" que no son tarifas de transporte real — siempre
 # cargados en 0 a mano, como placeholder (confirmado por la usuaria
@@ -1227,6 +1225,28 @@ COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PERIODO_DESDE", "PER
                 "TARIFA_USD", "LOCATION", "TIMESTAMP"]
 
 
+def _montar_drive_si_corresponde():
+    """Si CACHE_DIR apunta a Google Drive (ej. "/content/drive/...") y
+    esto corre en Colab, monta Drive automáticamente — no hace falta
+    un `drive.mount(...)` manual en otra celda. `drive.mount` ya es
+    idempotente (si ya está montado no hace nada raro), así que se
+    puede llamar en cada corrida sin problema. La primera vez en un
+    navegador/cuenta nueva, Colab de todos modos va a pedir un click de
+    autorización (flujo de seguridad de Google, no de este script) —
+    eso no se puede saltear."""
+    if not str(CACHE_DIR).startswith("/content/drive"):
+        return
+    try:
+        from google.colab import drive
+    except ImportError:
+        print(f"    ⚠ CACHE_DIR={CACHE_DIR!r} apunta a Google Drive, pero esto "
+              f"no está corriendo en Colab (no hay módulo google.colab) — "
+              f"dejalo montado a mano o usá una ruta local.")
+        return
+    print("📂 Montando Google Drive...")
+    drive.mount('/content/drive')
+
+
 def _archivo_cache_trfpo(location):
     return os.path.join(CACHE_DIR, f"tarifas_trfpo_{location}.xlsx")
 
@@ -1439,6 +1459,8 @@ def main():
     incluir_transportistas = modo in ("SOLO_TRANSPORTISTA", "COMPLETO")
     print(f"MODO={modo} (genérico: {'sí' if incluir_generico else 'no'}, "
           f"transportistas: {'sí' if incluir_transportistas else 'no'})")
+
+    _montar_drive_si_corresponde()
 
     tipo_cambio = TIPO_CAMBIO_ARS_USD
     if tipo_cambio is None:

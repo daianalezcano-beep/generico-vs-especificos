@@ -512,13 +512,25 @@ NO persiste entre runtimes distintos — `tarifas_trfpo_<LOCATION>.xlsx`
 escrito hoy desaparece si la sesión de Colab de la semana que viene es
 una nueva (lo normal, dado que TRFPO se mantiene fijo bastante tiempo
 y las corridas van a estar espaciadas). Se agregó `CACHE_DIR` (default
-`"."`) para poder apuntar el cache a Google Drive montado
-(`/content/drive/MyDrive/...`) en vez de al disco efímero de la sesión,
-con instrucciones de `drive.mount(...)` en el comentario junto a la
-constante. El mensaje de error de `cargar_cache_trfpo` cuando no
-encuentra el archivo menciona esto explícitamente, para que no se lea
-como "no corriste SOLO_GENERICO" cuando en realidad sí se corrió, sólo
-que en otra sesión de Colab sin Drive montado.
+`"."`) para poder apuntar el cache a Google Drive
+(`/content/drive/MyDrive/...`) en vez de al disco efímero de la sesión.
+El mensaje de error de `cargar_cache_trfpo` cuando no encuentra el
+archivo menciona esto explícitamente, para que no se lea como "no
+corriste SOLO_GENERICO" cuando en realidad sí se corrió, sólo que en
+otra sesión de Colab sin Drive montado.
+
+**Montaje de Drive automático**: a pedido de la usuaria,
+`_montar_drive_si_corresponde` llama `drive.mount('/content/drive')`
+directamente al principio de `main()` si `CACHE_DIR` empieza con
+`"/content/drive"` y el módulo `google.colab` está disponible (es
+decir, si esto corre en Colab) — no hace falta que la usuaria agregue
+un `drive.mount(...)` manual en otra celda. `drive.mount` es
+idempotente (no rompe si ya estaba montado), así que se puede llamar
+en cada corrida sin chequeo previo. Límite real que no se puede
+programar: la primera vez que Drive se usa desde un navegador/cuenta
+nueva, Colab igual muestra un popup de autorización de Google que
+necesita un click humano — es un paso de seguridad de Google, no algo
+que este script controle.
 
 ## Motor de matching (Fase 2) — hallazgos reales al validar
 

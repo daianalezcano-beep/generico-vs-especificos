@@ -53,9 +53,12 @@ de la validación contra datos reales.
   - ⚠️ Si corrés esto en **Google Colab** y vas a usar `SOLO_GENERICO`
     un día y `SOLO_TRANSPORTISTA` en una sesión posterior (el caso
     normal, ya que TRFPO se mantiene fijo bastante tiempo): el disco de
-    Colab no persiste entre sesiones. Montá Google Drive y apuntá
-    `CACHE_DIR` ahí (ver comentario junto a esa constante en el
-    script) para que `tarifas_trfpo_<LOCATION>.xlsx` sobreviva.
+    Colab no persiste entre sesiones. Poné `CACHE_DIR` apuntando a
+    Google Drive (ej. `"/content/drive/MyDrive/generico-vs-especificos"`)
+    para que `tarifas_trfpo_<LOCATION>.xlsx` sobreviva — el script monta
+    Drive solo, no hace falta un `drive.mount(...)` en otra celda (la
+    primera vez en un navegador/cuenta nueva, Colab igual va a pedir un
+    click de autorización — eso es de Google, no se puede saltear).
 - `comparacion_gap.py` — la misma Fase 3, como script standalone
   (pandas) para re-correr SÓLO la comparación sobre un
   `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.
