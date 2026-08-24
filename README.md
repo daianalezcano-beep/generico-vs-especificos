@@ -1,10 +1,15 @@
 # generico-vs-especificos
 
-Herramienta para comparar el valor cargado en el supplier genérico
-**TRFPO** (Transporte Por Asignar) contra los tarifarios reales vigentes
-de cada transportista, en Tourplan NX. Ver `BRIEF.md` para el pedido de
-negocio completo y `DISENO.md` para las decisiones de diseño y hallazgos
-de la validación contra datos reales.
+Herramienta para comparar el valor cargado en un supplier genérico
+(**TRFPO** — Transporte Por Asignar, **PEAPO**, **GUIAPO**, o cualquier
+otro que se agregue) contra los tarifarios reales vigentes de cada
+proveedor específico, en Tourplan NX. `COMPARACIONES` admite cualquier
+cantidad de relaciones genérico/específico independientes (ver
+`extraccion_tarifas_vigentes.py`) — no está atado a TRFPO. Ver
+`BRIEF.md` para el pedido de negocio original (enfocado en TRFPO/
+transportistas) y `DISENO.md` para las decisiones de diseño, la
+generalización a PEAPO/GUIAPO y los hallazgos de la validación contra
+datos reales.
 
 ## Estado actual
 
@@ -19,10 +24,14 @@ de la validación contra datos reales.
   (`extraccion_tarifas_vigentes.py`): extrae tarifas vigentes de
   Tourplan real Y calcula la comparación de gap al final, en la misma
   ejecución — genera `tarifas_vigentes.xlsx` y `comparacion_gap.xlsx`
-  de una sola vez. Validado con varias corridas reales contra Tourplan
-  Test (última: 116 códigos TRFPO + 52 de 6HOUS1 en BUE, matching limpio
-  en 204/208 filas) — bugs reales encontrados y corregidos en el camino,
-  ver DISENO.md.
+  de una sola vez. `COMPARACIONES` soporta cualquier cantidad de
+  relaciones genérico/específico (TRFPO, PEAPO, GUIAPO, o las que se
+  agreguen) en la misma corrida. Validado con varias corridas reales
+  contra Tourplan Test para TRFPO (última: 116 códigos TRFPO + 52 de
+  6HOUS1 en BUE, matching limpio en 204/208 filas) — bugs reales
+  encontrados y corregidos en el camino, ver DISENO.md. PEAPO/GUIAPO
+  están soportados en el código pero todavía sin validar contra
+  Tourplan real.
 - ⏳ Fase 4 (salida Excel final con el gap resaltado): pendiente.
 
 ## Estructura
@@ -41,24 +50,37 @@ de la validación contra datos reales.
   correr. `MOSTRAR_CAPTURAS=True` muestra las capturas inline si se
   corre en Colab/Jupyter (opcional). Salida: `tarifas_vigentes.xlsx`
   (una fila por código + período + rango de pax) y
-  `comparacion_gap.xlsx` (el gap TRFPO vs. cada transportista, con
-  `DIFERENCIA_PCT` formateado con signo %).
-  - `MODO = "COMPLETO"` (default): extrae genérico + transportistas.
-  - `MODO = "SOLO_GENERICO"`: extrae sólo TRFPO y lo guarda en
-    `tarifas_trfpo_<LOCATION>.xlsx` para reusar después — correr una
-    vez cuando TRFPO cambie (1-2 veces al año), no en cada corrida.
-  - `MODO = "SOLO_TRANSPORTISTA"`: extrae sólo los transportistas
-    listados y arma la comparación contra el TRFPO ya guardado (falla
-    con un error claro si no corriste `SOLO_GENERICO`/`COMPLETO` antes).
+  `comparacion_gap.xlsx` (el gap de cada relación genérico/específico,
+  con `DIFERENCIA_PCT` formateado con signo %).
+  - `COMPARACIONES` es una lista de relaciones genérico/específico
+    independientes — no está atada a TRFPO. Cada elemento trae su
+    propia `location`, `service_type`, `generico`, `especificos`
+    (lista de códigos de proveedor específico) y `price_code`. Ya trae
+    la relación TRFPO vs. transportistas y ejemplos comentados de
+    PEAPO (`service_type: "PJ"`) y GUIAPO (`service_type: "GU"`) —
+    para agregar una relación nueva alcanza con sumar un elemento más
+    a la lista, sin tocar el resto del script.
+  - `MODO = "COMPLETO"` (default): extrae genérico(s) + específicos.
+  - `MODO = "SOLO_GENERICO"`: extrae sólo los genéricos de
+    `COMPARACIONES` y los guarda en
+    `tarifas_generico_<GENERICO>_<LOCATION>.xlsx` para reusar después —
+    correr una vez cuando el genérico cambie (1-2 veces al año), no en
+    cada corrida.
+  - `MODO = "SOLO_ESPECIFICOS"`: extrae sólo los específicos listados y
+    arma la comparación contra los genéricos ya guardados (falla con un
+    error claro si no corriste `SOLO_GENERICO`/`COMPLETO` antes para
+    esa combinación de genérico + location).
   - ⚠️ Si corrés esto en **Google Colab** y vas a usar `SOLO_GENERICO`
-    un día y `SOLO_TRANSPORTISTA` en una sesión posterior (el caso
-    normal, ya que TRFPO se mantiene fijo bastante tiempo): el disco de
-    Colab no persiste entre sesiones. Poné `CACHE_DIR` apuntando a
-    Google Drive (ej. `"/content/drive/MyDrive/generico-vs-especificos"`)
-    para que `tarifas_trfpo_<LOCATION>.xlsx` sobreviva — el script monta
-    Drive solo, no hace falta un `drive.mount(...)` en otra celda (la
-    primera vez en un navegador/cuenta nueva, Colab igual va a pedir un
-    click de autorización — eso es de Google, no se puede saltear).
+    un día y `SOLO_ESPECIFICOS` en una sesión posterior (el caso
+    normal, ya que un genérico se mantiene fijo bastante tiempo): el
+    disco de Colab no persiste entre sesiones. Poné `CACHE_DIR`
+    apuntando a Google Drive (ej.
+    `"/content/drive/MyDrive/generico-vs-especificos"`) para que
+    `tarifas_generico_<GENERICO>_<LOCATION>.xlsx` sobreviva — el script
+    monta Drive solo, no hace falta un `drive.mount(...)` en otra
+    celda (la primera vez en un navegador/cuenta nueva, Colab igual va
+    a pedir un click de autorización — eso es de Google, no se puede
+    saltear).
 - `comparacion_gap.py` — la misma Fase 3, como script standalone
   (pandas) para re-correr SÓLO la comparación sobre un
   `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.

@@ -1,5 +1,5 @@
 # ============================================================
-# TRFPO vs TARIFARIOS — FASE 1: extracción de tarifa vigente
+# GENÉRICO vs ESPECÍFICOS — FASE 1: extracción de tarifa vigente
 # Google Colab — celda única (mismo formato que los scripts hermanos)
 # ------------------------------------------------------------
 #   Adaptado de:
@@ -18,9 +18,17 @@
 #   nada de eso aplica: acá sólo se lee la tarifa vigente tal como está
 #   cargada en el propio componente, sin simular nada).
 #
+#   GENERALIZADO A CUALQUIER PAR GENÉRICO/ESPECÍFICO: nació para TRFPO
+#   (Transporte Por Asignar, service type TR) vs. transportistas, pero
+#   COMPARACIONES acepta cualquier otra relación con la misma forma —
+#   ej. PEAPO (service type PJ) o GUIAPO (service type GU) vs. sus
+#   proveedores específicos — agregando otra entrada a la lista. Cada
+#   relación puede tener su propio Price Code (ver "price_code" en
+#   COMPARACIONES) — no hace falta que todas usen "TR". Ver DISENO.md.
+#
 #   SIN CSV/EXCEL DE ENTRADA: no hace falta exportar nada de Tourplan
 #   antes de correr. Se edita COMPARACIONES (más abajo) con Location +
-#   Supplier genérico + Supplier(es) transportista, y el script busca
+#   Supplier genérico + Supplier(es) específico(s), y el script busca
 #   él mismo, en Tourplan, todos los códigos vigentes de cada supplier
 #   (listar_codigos_supplier) y les lee la tarifa.
 #
@@ -29,10 +37,12 @@
 #   204/208 filas de la comparación. Varios bugs reales ya encontrados
 #   y corregidos en el camino — ver DISENO.md para el detalle de cada
 #   uno. Sin confirmar todavía: el texto exacto del header de moneda en
-#   la lista de períodos (`_leer_periodos_rates`), y si conviene generar
-#   una fila por cada período de TRFPO cuando hay más de uno superpuesto
-#   (hoy se elige sólo el de mayor superposición, marcado con
-#   MULTIPLES_PERIODOS_TRFPO — ver DISENO.md).
+#   la lista de períodos (`_leer_periodos_rates`); si conviene generar
+#   una fila por cada período del genérico cuando hay más de uno
+#   superpuesto (hoy se elige sólo el de mayor superposición, marcado
+#   con MULTIPLES_PERIODOS_GENERICO); y todo lo específico de PJ/GU
+#   (Price Code, exclusiones, formato de RATES) — sin corridas reales
+#   contra esas relaciones todavía, sólo TRFPO está confirmado.
 # ============================================================
 
 import os, sys, subprocess, importlib, shutil, time, re
@@ -165,56 +175,90 @@ BASE_URL   = "https://tourplannx.eurotur.com.ar/TourplanNX_Test"
 # armar ningún CSV/Excel de entrada. Por cada entrada, el script busca
 # en Tourplan (Product Search, Location + Supplier + Service Type, sin
 # código) TODOS los códigos vigentes de "generico" y de cada supplier
-# en "transportistas", y les lee la tarifa — ver listar_codigos_supplier.
+# en "especificos", y les lee la tarifa — ver listar_codigos_supplier.
+#
+# Cada entrada es una relación genérico/específico independiente — se
+# pueden agregar más sin tocar el resto del script, ej. PEAPO (service
+# type PJ) o GUIAPO (service type GU) además de TRFPO. "price_code" es
+# opcional por entrada (si no está, usa PRICE_CODE_DEFAULT más abajo) —
+# no todas las relaciones tienen por qué filtrar por el mismo Price
+# Code que TRFPO. "transportistas" sigue aceptándose como alias viejo
+# de "especificos" (por compatibilidad con COMPARACIONES ya editados).
 COMPARACIONES = [
     {
         "location": "BUE",
         "service_type": "TR",
         "generico": "TRFPO",
-        "transportistas": ["1TEP01", "6HOUS1"],
+        "especificos": ["1TEP01", "6HOUS1"],
+        "price_code": "TR",
     },
+    # Agregar así cuando haga falta comparar otra relación genérico/
+    # específico (sin confirmar todavía contra Tourplan real — ver
+    # cabecera del archivo):
+    # {
+    #     "location": "BUE",
+    #     "service_type": "PJ",
+    #     "generico": "PEAPO",
+    #     "especificos": [...],
+    #     "price_code": "TR",  # o "ALL", o lo que corresponda para PEAPO
+    # },
+    # {
+    #     "location": "BUE",
+    #     "service_type": "GU",
+    #     "generico": "GUIAPO",
+    #     "especificos": [...],
+    #     "price_code": "TR",
+    # },
 ]
 OUTPUT_XLSX = "tarifas_vigentes.xlsx"
 OUTPUT_GAP_XLSX = "comparacion_gap.xlsx"
 SS_DIR      = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
 
-# Qué extraer en esta corrida — TRFPO cambia 1-2 veces al año y después
-# queda fijo como costo base (ver DISENO.md), así que no hace falta
-# re-extraer su catálogo completo cada vez que se agrega/cambia un
-# transportista a comparar:
-#   "COMPLETO"          → extrae genérico + transportistas (como antes).
-#   "SOLO_GENERICO"      → extrae sólo TRFPO, lo guarda en
-#                          tarifas_trfpo_<LOCATION>.xlsx para reusar
-#                          después. No calcula comparación (no hay
-#                          transportista todavía).
-#   "SOLO_TRANSPORTISTA" → extrae sólo los "transportistas" listados en
+# Qué extraer en esta corrida — el genérico de cada relación (TRFPO,
+# PEAPO, GUIAPO...) suele cambiar sólo 1-2 veces al año y después queda
+# fijo como costo base (ver DISENO.md), así que no hace falta
+# re-extraerlo cada vez que se agrega/cambia un específico a comparar:
+#   "COMPLETO"          → extrae genérico + específicos (como antes).
+#   "SOLO_GENERICO"      → extrae sólo el/los genérico(s) de
+#                          COMPARACIONES, los guarda en
+#                          tarifas_generico_<GENERICO>_<LOCATION>.xlsx
+#                          para reusar después. No calcula comparación
+#                          (no hay específico todavía).
+#   "SOLO_ESPECIFICOS"   → extrae sólo los "especificos" listados en
 #                          COMPARACIONES, y arma la comparación contra
-#                          el TRFPO ya guardado (tarifas_trfpo_<LOCATION>.xlsx
+#                          el genérico ya guardado
+#                          (tarifas_generico_<GENERICO>_<LOCATION>.xlsx
 #                          de una corrida SOLO_GENERICO o COMPLETO
 #                          anterior — falla con un error claro si no
-#                          existe todavía).
+#                          existe todavía). "SOLO_TRANSPORTISTA" sigue
+#                          aceptándose como alias viejo.
 MODO = "COMPLETO"
 
-# Carpeta donde se guarda/lee tarifas_trfpo_<LOCATION>.xlsx (el cache
-# de TRFPO). Por default "." (la carpeta donde corre el script) —
-# ATENCIÓN si esto corre en Google Colab: el disco de la sesión de
-# Colab NO persiste entre sesiones distintas (se pierde al
+# Carpeta donde se guarda/lee tarifas_generico_<GENERICO>_<LOCATION>.xlsx
+# (el cache de cada genérico). Por default "." (la carpeta donde corre
+# el script) — ATENCIÓN si esto corre en Google Colab: el disco de la
+# sesión de Colab NO persiste entre sesiones distintas (se pierde al
 # desconectarse el runtime). Si vas a correr SOLO_GENERICO un día y
-# SOLO_TRANSPORTISTA días/semanas después (el caso normal, dado que
-# TRFPO se mantiene fijo bastante tiempo), poné acá una ruta de Google
-# Drive — el script monta Drive solo (_montar_drive_si_corresponde),
-# no hace falta un drive.mount(...) manual en otra celda:
+# SOLO_ESPECIFICOS días/semanas después (el caso normal, dado que el
+# genérico se mantiene fijo bastante tiempo), poné acá una ruta de
+# Google Drive — el script monta Drive solo
+# (_montar_drive_si_corresponde), no hace falta un drive.mount(...)
+# manual en otra celda:
 CACHE_DIR = "."  # ej. "/content/drive/MyDrive/generico-vs-especificos"
 
-# Códigos "genéricos" que no son tarifas de transporte real — siempre
-# cargados en 0 a mano, como placeholder (confirmado por la usuaria
-# para 600TRF/700TRF; MINWAT es el mismo caso, visto en las muestras).
-# Se descartan en descubrir_cola ANTES de abrir el producto — ni
-# siquiera se cuenta el tiempo de Selenium en éstos. Editable: agregar
-# el código que haga falta. Mismo criterio que NO_TRANSPORTE en
-# matching_engine.py (Fase 2), pero acá no se importa ese módulo para
-# mantener este script autocontenido en un solo archivo (Colab).
+# Códigos "genéricos" que no son tarifas reales de ningún servicio —
+# siempre cargados en 0 a mano, como placeholder (confirmado por la
+# usuaria para 600TRF/700TRF de TRFPO; MINWAT es el mismo caso, visto
+# en las muestras). Se descartan en descubrir_cola ANTES de abrir el
+# producto — ni siquiera se cuenta el tiempo de Selenium en éstos.
+# Editable: agregar el código que haga falta — si PEAPO/GUIAPO u otra
+# relación futura tienen sus propios placeholders análogos, van acá
+# también (son globales, no por relación, ya que ninguno de estos
+# textos/códigos debería aparecer fuera de su contexto de todos modos).
+# Mismo criterio que NO_TRANSPORTE en matching_engine.py (Fase 2), pero
+# acá no se importa ese módulo para mantener este script autocontenido
+# en un solo archivo (Colab).
 CODIGOS_EXCLUIR = {"600TRF", "700TRF", "MINWAT"}
 
 # Además del código explícito, se descarta por texto de la descripción
@@ -242,12 +286,16 @@ def _es_codigo_excluido(codigo, descripcion):
 PERIODO_ANALISIS_DESDE = None
 PERIODO_ANALISIS_HASTA = None
 
-# Price Code a filtrar en la lista de RATES antes de leer valores. En
-# modo "All Price Codes" (vista agregada default de Tourplan) los
-# valores mostrados NO son los persistidos — leer ahí puede devolver
-# 0.0 silenciosamente (hallazgo real de tourplan_valorizacion_pkg_v3.py,
-# ver DISENO.md). "ALL"/""/None = no filtrar (arriesga el problema
-# anterior si el período tiene más de un price code cargado).
+# Price Code default a filtrar en la lista de RATES antes de leer
+# valores, para las relaciones de COMPARACIONES que no traigan su
+# propio "price_code" (ver ahí). En modo "All Price Codes" (vista
+# agregada default de Tourplan) los valores mostrados NO son los
+# persistidos — leer ahí puede devolver 0.0 silenciosamente (hallazgo
+# real de tourplan_valorizacion_pkg_v3.py, ver DISENO.md). "ALL"/""/
+# None = no filtrar (arriesga el problema anterior si el período tiene
+# más de un price code cargado). Confirmado sólo para TRFPO — sin
+# confirmar todavía si PEAPO/GUIAPO usan el mismo Price Code "TR" o
+# alguno propio (usar "price_code" por entrada en COMPARACIONES si no).
 PRICE_CODE_DEFAULT = "TR"
 
 # Límite de códigos a procesar en esta corrida (0 = sin límite, procesa
@@ -1092,23 +1140,23 @@ def _extraer_filas_ad(tabla, codigo, moneda_periodo=""):
     return out
 
 
-def _abrir_lista_rates(driver, codigo, etiqueta):
+def _abrir_lista_rates(driver, codigo, etiqueta, price_code):
     """Navega (o vuelve a navegar) a RATES desde el producto en
-    contexto, y aplica el filtro de PRICE_CODE_DEFAULT si corresponde.
-    Se llama de nuevo por cada período a abrir porque, al entrar al
-    detalle de un período, no queda forma confirmada de "volver" a la
-    lista salvo renavegar (mismo patrón de re-navegación que usa
+    contexto, y aplica el filtro de price_code si corresponde. Se llama
+    de nuevo por cada período a abrir porque, al entrar al detalle de
+    un período, no queda forma confirmada de "volver" a la lista salvo
+    renavegar (mismo patrón de re-navegación que usa
     tourplan_valorizacion_pkg_v3.py en su verificación post-SAVE)."""
     hamburger(driver)
     menu_item(driver, "RATES")
     time.sleep(3 * VELOCIDAD)
-    if PRICE_CODE_DEFAULT:
-        _seleccionar_price_code(driver, PRICE_CODE_DEFAULT, etiqueta=etiqueta)
+    if price_code:
+        _seleccionar_price_code(driver, price_code, etiqueta=etiqueta)
         time.sleep(1.5 * VELOCIDAD)
     ss(driver, f"rates_lista_{codigo[:10]}")
 
 
-def leer_tarifa_vigente_componente(driver, codigo):
+def leer_tarifa_vigente_componente(driver, codigo, price_code=None):
     """Abre el tab RATES del producto ya en contexto (ver
     buscar_producto), identifica qué período(s) caen dentro de
     [PERIODO_ANALISIS_DESDE, PERIODO_ANALISIS_HASTA] (por defecto, sólo
@@ -1117,13 +1165,19 @@ def leer_tarifa_vigente_componente(driver, codigo):
     tarifa, moneda, periodo_desde, periodo_hasta, price_code} — un
     conjunto de filas AD por cada período que matcheó.
 
+    price_code: filtro de Price Code a aplicar en RATES — viene de la
+    relación genérico/específico de COMPARACIONES (cada una puede tener
+    el suyo, ej. "TR" para TRFPO; otra relación como PEAPO/GUIAPO puede
+    necesitar uno distinto o "ALL"). None/"" = usa PRICE_CODE_DEFAULT.
+
     Moneda: cada período de Rates tiene columnas BUY CURRENCY y SELL
     CURRENCY, por defecto cargadas iguales — confirmado por la usuaria,
     así que alcanza con leer una (se prioriza BUY si ambas existen). No
     hay fallback a config manual: si esta columna no aparece en la
     grilla real, la fila queda con moneda vacía y se avisa (ver
-    DISENO.md), en vez de asumir una moneda por transportista."""
-    _abrir_lista_rates(driver, codigo, etiqueta=f"lista {codigo}")
+    DISENO.md), en vez de asumir una moneda por proveedor."""
+    price_code = price_code if price_code is not None else PRICE_CODE_DEFAULT
+    _abrir_lista_rates(driver, codigo, etiqueta=f"lista {codigo}", price_code=price_code)
 
     periodos = _leer_periodos_rates(driver)
     if not periodos:
@@ -1146,7 +1200,8 @@ def leer_tarifa_vigente_componente(driver, codigo):
     for n, idx in enumerate(idxs):
         if n > 0:
             # Renavegar: el DOM de la lista se perdió al entrar al período anterior.
-            _abrir_lista_rates(driver, codigo, etiqueta=f"lista {codigo} (período {n+1})")
+            _abrir_lista_rates(driver, codigo, etiqueta=f"lista {codigo} (período {n+1})",
+                                price_code=price_code)
         periodo = periodos[idx]
         filas_periodo = driver.find_elements(By.CSS_SELECTOR, "td.tpcol-rateperiod")
         if idx >= len(filas_periodo):
@@ -1156,8 +1211,8 @@ def leer_tarifa_vigente_componente(driver, codigo):
         jc(driver, filas_periodo[idx])
         time.sleep(5 * VELOCIDAD)
         ss(driver, f"rates_periodo_{codigo[:10]}_{n+1}")
-        if PRICE_CODE_DEFAULT:
-            _seleccionar_price_code(driver, PRICE_CODE_DEFAULT, etiqueta=f"período {codigo}")
+        if price_code:
+            _seleccionar_price_code(driver, price_code, etiqueta=f"período {codigo}")
 
         tabla = _leer_tabla_rates(driver)
         for _ in range(3):
@@ -1183,30 +1238,33 @@ def leer_tarifa_vigente_componente(driver, codigo):
 
 # ── Cola de trabajo y moneda ─────────────────────────────────────────
 
-def descubrir_cola(driver, comparaciones, incluir_generico=True, incluir_transportistas=True):
-    """A partir de COMPARACIONES (location + supplier genérico + lista
-    de transportistas), busca en Tourplan los códigos vigentes de cada
+def descubrir_cola(driver, comparaciones, incluir_generico=True, incluir_especificos=True):
+    """A partir de COMPARACIONES (una entrada por relación genérico/
+    específico — location + supplier genérico + lista de específicos,
+    ver COMPARACIONES), busca en Tourplan los códigos vigentes de cada
     supplier (listar_codigos_supplier) y devuelve la cola de trabajo
-    completa — un (LOCATION, SUPPLIER, CODIGO, SERVICE_TYPE, ES_GENERICO)
-    por código encontrado. Requiere sesión ya logueada.
+    completa — un (LOCATION, SUPPLIER, CODIGO, SERVICE_TYPE, ES_GENERICO,
+    PRICE_CODE) por código encontrado. Requiere sesión ya logueada.
 
-    incluir_generico/incluir_transportistas permiten limitar qué se
-    extrae esta corrida (ver MODO) — para no re-extraer TRFPO completo
-    cuando sólo hace falta actualizar un transportista."""
+    incluir_generico/incluir_especificos permiten limitar qué se extrae
+    esta corrida (ver MODO) — para no re-extraer el genérico completo
+    cuando sólo hace falta actualizar un específico."""
     cola = []
     for comp in comparaciones:
         location = comp["location"]
         service_type = comp.get("service_type", "")
+        price_code = comp.get("price_code", PRICE_CODE_DEFAULT)
+        especificos = comp.get("especificos", comp.get("transportistas", []))
         suppliers = []
         if incluir_generico:
             suppliers.append((comp["generico"], True))
-        if incluir_transportistas:
-            suppliers += [(s, False) for s in comp.get("transportistas", [])]
+        if incluir_especificos:
+            suppliers += [(s, False) for s in especificos]
         for supplier, es_generico in suppliers:
             items = listar_codigos_supplier(driver, location, supplier, service_type)
             for item in items:
                 if _es_codigo_excluido(item["codigo"], item.get("descripcion", "")):
-                    print(f"    (excluido, no es transporte real: {item['codigo']} "
+                    print(f"    (excluido, no es un servicio real: {item['codigo']} "
                           f"— {item.get('descripcion', '')!r})")
                     continue
                 cola.append({
@@ -1216,13 +1274,20 @@ def descubrir_cola(driver, comparaciones, incluir_generico=True, incluir_transpo
                     "descripcion": item.get("descripcion", ""),
                     "service_type": service_type,
                     "es_generico": es_generico,
+                    "generico": comp["generico"],
+                    "price_code": price_code,
                 })
     return cola
 
 
-COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "PERIODO_DESDE", "PERIODO_HASTA",
-                "PRICE_CODE", "PAX_DESDE", "PAX_HASTA", "TARIFA_VIGENTE", "MONEDA",
-                "TARIFA_USD", "LOCATION", "TIMESTAMP"]
+COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "GENERICO", "PERIODO_DESDE",
+                "PERIODO_HASTA", "PRICE_CODE", "PAX_DESDE", "PAX_HASTA", "TARIFA_VIGENTE",
+                "MONEDA", "TARIFA_USD", "LOCATION", "TIMESTAMP"]
+# GENERICO: a qué supplier genérico corresponde esta relación (para
+# una fila ES_GENERICO=True, es su propio SUPPLIER; para una fila
+# específica, el "generico" de la entrada de COMPARACIONES de la que
+# vino) — necesario para no mezclar relaciones distintas que comparten
+# location (ej. TRFPO y PEAPO, ambos en BUE) al armar la comparación.
 
 
 def _montar_drive_si_corresponde():
@@ -1247,27 +1312,30 @@ def _montar_drive_si_corresponde():
     drive.mount('/content/drive')
 
 
-def _archivo_cache_trfpo(location):
-    return os.path.join(CACHE_DIR, f"tarifas_trfpo_{location}.xlsx")
+def _archivo_cache_generico(generico, location):
+    return os.path.join(CACHE_DIR, f"tarifas_generico_{generico}_{location}.xlsx")
 
 
-def guardar_cache_trfpo(filas_salida):
-    """Guarda, por location, las filas ES_GENERICO=True de esta corrida
-    en tarifas_trfpo_<LOCATION>.xlsx — para que una corrida futura en
-    MODO=SOLO_TRANSPORTISTA no tenga que re-extraer TRFPO completo (ver
-    DISENO.md, "Pendiente: desacoplar la extracción de TRFPO..."). Se
-    llama siempre que esta corrida haya extraído genérico (COMPLETO o
-    SOLO_GENERICO), pisando el cache anterior de esa location."""
+def guardar_cache_generico(filas_salida):
+    """Guarda, por (supplier genérico, location), las filas
+    ES_GENERICO=True de esta corrida en
+    tarifas_generico_<GENERICO>_<LOCATION>.xlsx — para que una corrida
+    futura en MODO=SOLO_ESPECIFICOS no tenga que re-extraer el genérico
+    completo (ver DISENO.md, "Resuelto: desacoplar la extracción de
+    TRFPO..."). Un archivo distinto por supplier (TRFPO/PEAPO/GUIAPO...)
+    para que no se pisen entre sí en la misma location. Se llama
+    siempre que esta corrida haya extraído genérico (COMPLETO o
+    SOLO_GENERICO), pisando el cache anterior de ese supplier+location."""
     if CACHE_DIR not in (".", ""):
         os.makedirs(CACHE_DIR, exist_ok=True)
-    por_location = {}
+    por_generico_location = {}
     for f in filas_salida:
         if f["ES_GENERICO"]:
-            por_location.setdefault(f["LOCATION"], []).append(f)
-    for location, filas in por_location.items():
+            por_generico_location.setdefault((f["SUPPLIER"], f["LOCATION"]), []).append(f)
+    for (generico, location), filas in por_generico_location.items():
         wb = Workbook()
         hoja = wb.active
-        hoja.title = "TARIFAS_TRFPO"
+        hoja.title = "TARIFAS_GENERICO"
         hoja.append(COLS_TARIFAS)
         for c in hoja[1]:
             c.font = Font(bold=True)
@@ -1275,37 +1343,38 @@ def guardar_cache_trfpo(filas_salida):
             hoja.append([fila.get(c, "") for c in COLS_TARIFAS])
         for i, c in enumerate(COLS_TARIFAS, start=1):
             hoja.column_dimensions[get_column_letter(i)].width = max(12, len(c) + 2)
-        archivo = _archivo_cache_trfpo(location)
+        archivo = _archivo_cache_generico(generico, location)
         wb.save(archivo)
-        print(f"💾 Cache de TRFPO guardado: {archivo} ({len(filas)} filas)")
+        print(f"💾 Cache de {generico} guardado: {archivo} ({len(filas)} filas)")
 
 
-def cargar_cache_trfpo(comparaciones):
-    """Carga tarifas_trfpo_<LOCATION>.xlsx por cada location de
-    COMPARACIONES — usado en MODO=SOLO_TRANSPORTISTA para no re-extraer
-    TRFPO. Falla con un mensaje claro si falta el archivo de alguna
-    location (hace falta haber corrido MODO=SOLO_GENERICO o COMPLETO
-    al menos una vez antes, para esa location)."""
+def cargar_cache_generico(comparaciones):
+    """Carga tarifas_generico_<GENERICO>_<LOCATION>.xlsx por cada
+    relación (supplier genérico, location) de COMPARACIONES — usado en
+    MODO=SOLO_ESPECIFICOS para no re-extraer el genérico. Falla con un
+    mensaje claro si falta el archivo de alguna relación (hace falta
+    haber corrido MODO=SOLO_GENERICO o COMPLETO al menos una vez antes,
+    para esa relación)."""
     filas = []
-    locations = {c["location"] for c in comparaciones}
-    for location in locations:
-        archivo = _archivo_cache_trfpo(location)
+    relaciones = {(c["generico"], c["location"]) for c in comparaciones}
+    for generico, location in relaciones:
+        archivo = _archivo_cache_generico(generico, location)
         if not os.path.exists(archivo):
             raise FileNotFoundError(
-                f"No encontré {archivo}. Con MODO=SOLO_TRANSPORTISTA hace falta "
+                f"No encontré {archivo}. Con MODO=SOLO_ESPECIFICOS hace falta "
                 f"haber corrido antes MODO=SOLO_GENERICO (o COMPLETO) al menos "
-                f"una vez para la location {location!r}, así queda guardado el "
-                f"cache de TRFPO que esta corrida necesita. Si esto corre en "
-                f"Colab y CACHE_DIR='.' (default), el archivo se pierde entre "
-                f"sesiones distintas del runtime — montá Google Drive y apuntá "
-                f"CACHE_DIR ahí para que el cache sobreviva de una sesión a otra "
-                f"(ver comentario junto a CACHE_DIR al principio del script).")
+                f"una vez para {generico!r} en {location!r}, así queda guardado "
+                f"el cache que esta corrida necesita. Si esto corre en Colab y "
+                f"CACHE_DIR='.' (default), el archivo se pierde entre sesiones "
+                f"distintas del runtime — montá Google Drive y apuntá CACHE_DIR "
+                f"ahí para que el cache sobreviva de una sesión a otra (ver "
+                f"comentario junto a CACHE_DIR al principio del script).")
         wb = load_workbook(archivo, data_only=True)
         filas_hoja = list(wb.active.iter_rows(values_only=True))
         header = filas_hoja[0]
         for row in filas_hoja[1:]:
             filas.append(dict(zip(header, row)))
-        print(f"📂 Cache de TRFPO cargado: {archivo} ({len(filas_hoja) - 1} filas)")
+        print(f"📂 Cache de {generico} cargado: {archivo} ({len(filas_hoja) - 1} filas)")
     return filas
 
 
@@ -1331,18 +1400,22 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
 # otra. Ver DISENO.md) ──────────────────────────────────────────────
 
 COLS_GAP = [
-    "LOCATION", "CODIGO_TRFPO", "SUPPLIER_TRANSPORTISTA", "CODIGO_TRANSPORTISTA",
+    "LOCATION", "CODIGO_GENERICO", "SUPPLIER_ESPECIFICO", "CODIGO_ESPECIFICO",
     "PAX_DESDE", "PAX_HASTA",
-    "PERIODO_TRANSPORTISTA_DESDE", "PERIODO_TRANSPORTISTA_HASTA",
-    "PERIODO_TRFPO_DESDE", "PERIODO_TRFPO_HASTA",
-    "TARIFA_TRFPO_USD", "TARIFA_TRANSPORTISTA_USD",
+    "PERIODO_ESPECIFICO_DESDE", "PERIODO_ESPECIFICO_HASTA",
+    "PERIODO_GENERICO_DESDE", "PERIODO_GENERICO_HASTA",
+    "TARIFA_GENERICO_USD", "TARIFA_ESPECIFICO_USD",
     "DIFERENCIA_USD", "DIFERENCIA_PCT", "FLAGS",
 ]
 
 
-def _mejor_prefijo_trfpo(codigo, codigos_trfpo_desc):
-    """Copiado de matching_engine.py::mejor_prefijo_trfpo."""
-    candidatos = [c for c in codigos_trfpo_desc if codigo.startswith(c)]
+def _mejor_prefijo_generico(codigo, codigos_generico_desc):
+    """Longest-prefix-match código específico → código genérico. Mismo
+    algoritmo que matching_engine.py::mejor_prefijo_trfpo (Fase 2) —
+    nunca dependió de nada específico de TRFPO (es prefijo de string
+    puro), así que sirve igual para cualquier otra relación genérico/
+    específico (PEAPO, GUIAPO, la que sea) sin cambios."""
+    candidatos = [c for c in codigos_generico_desc if codigo.startswith(c)]
     if not candidatos:
         return None, []
     return max(candidatos, key=len), candidatos
@@ -1363,86 +1436,101 @@ def _dias_superposicion(desde1, hasta1, desde2, hasta2):
 def construir_comparacion_gap(filas):
     """A partir de filas_salida (la misma lista de dicts que se
     escribe en tarifas_vigentes.xlsx, ya en memoria — no hace falta
-    releer el Excel) calcula el gap TRFPO vs. cada código de
-    transportista. Ver comparacion_gap.py para el detalle de banderas
-    y criterio de match (idéntico acá, sólo sin pandas)."""
+    releer el Excel) calcula el gap genérico vs. cada código
+    específico. Cada fila específica sólo se compara contra los
+    genéricos de SU MISMA relación (columna `GENERICO`, ver
+    COLS_TARIFAS) — no contra cualquier genérico que comparta su
+    location — para no mezclar entre sí relaciones distintas que
+    convivan en la misma location (ej. TRFPO y PEAPO ambos en BUE). Si
+    a una fila específica le falta `GENERICO` (dato viejo, de antes de
+    que existiera esta columna), cae a compararse contra TODOS los
+    genéricos de su location, como se hacía antes. Ver comparacion_gap.py
+    para el detalle de banderas y criterio de match (idéntico acá, sólo
+    sin pandas)."""
     por_location = {}
     for f in filas:
         por_location.setdefault(f["LOCATION"], []).append(f)
 
     salida = []
     for location, filas_loc in por_location.items():
-        filas_trfpo = [f for f in filas_loc if f["ES_GENERICO"]]
-        filas_transp = [f for f in filas_loc if not f["ES_GENERICO"]]
-        codigos_trfpo = sorted({f["PRODUCT_CODE"] for f in filas_trfpo}, key=len, reverse=True)
+        filas_generico_todos = [f for f in filas_loc if f["ES_GENERICO"]]
+        filas_especifico = [f for f in filas_loc if not f["ES_GENERICO"]]
 
-        for ft in filas_transp:
+        for fe in filas_especifico:
+            generico_asociado = fe.get("GENERICO")
+            filas_generico = (
+                [f for f in filas_generico_todos if f["SUPPLIER"] == generico_asociado]
+                if generico_asociado else filas_generico_todos
+            )
+            codigos_generico = sorted({f["PRODUCT_CODE"] for f in filas_generico}, key=len, reverse=True)
+
             base = {
                 "LOCATION": location,
-                "SUPPLIER_TRANSPORTISTA": ft["SUPPLIER"],
-                "CODIGO_TRANSPORTISTA": ft["PRODUCT_CODE"],
-                "PAX_DESDE": ft["PAX_DESDE"], "PAX_HASTA": ft["PAX_HASTA"],
-                "PERIODO_TRANSPORTISTA_DESDE": ft["PERIODO_DESDE"],
-                "PERIODO_TRANSPORTISTA_HASTA": ft["PERIODO_HASTA"],
-                "PERIODO_TRFPO_DESDE": "", "PERIODO_TRFPO_HASTA": "",
-                "TARIFA_TRANSPORTISTA_USD": ft["TARIFA_USD"],
+                "SUPPLIER_ESPECIFICO": fe["SUPPLIER"],
+                "CODIGO_ESPECIFICO": fe["PRODUCT_CODE"],
+                "PAX_DESDE": fe["PAX_DESDE"], "PAX_HASTA": fe["PAX_HASTA"],
+                "PERIODO_ESPECIFICO_DESDE": fe["PERIODO_DESDE"],
+                "PERIODO_ESPECIFICO_HASTA": fe["PERIODO_HASTA"],
+                "PERIODO_GENERICO_DESDE": "", "PERIODO_GENERICO_HASTA": "",
+                "TARIFA_ESPECIFICO_USD": fe["TARIFA_USD"],
             }
-            mejor, candidatos = _mejor_prefijo_trfpo(ft["PRODUCT_CODE"], codigos_trfpo)
+            mejor, candidatos = _mejor_prefijo_generico(fe["PRODUCT_CODE"], codigos_generico)
             flags = []
             if len(candidatos) > 1:
                 flags.append("COLISION_REVISAR")
             if mejor is None:
-                salida.append({**base, "CODIGO_TRFPO": "", "TARIFA_TRFPO_USD": None,
+                salida.append({**base, "CODIGO_GENERICO": "", "TARIFA_GENERICO_USD": None,
                                "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
-                               "FLAGS": ",".join(flags + ["SIN_MATCH_TRFPO"])})
+                               "FLAGS": ",".join(flags + ["SIN_MATCH_GENERICO"])})
                 continue
 
             candidatas = [
-                f for f in filas_trfpo
+                f for f in filas_generico
                 if f["PRODUCT_CODE"] == mejor
                 and f["PAX_DESDE"] is not None and f["PAX_HASTA"] is not None
-                and ft["PAX_DESDE"] is not None and ft["PAX_HASTA"] is not None
-                and f["PAX_DESDE"] <= ft["PAX_HASTA"] and f["PAX_HASTA"] >= ft["PAX_DESDE"]
+                and fe["PAX_DESDE"] is not None and fe["PAX_HASTA"] is not None
+                and f["PAX_DESDE"] <= fe["PAX_HASTA"] and f["PAX_HASTA"] >= fe["PAX_DESDE"]
             ]
             if not candidatas:
-                salida.append({**base, "CODIGO_TRFPO": mejor, "TARIFA_TRFPO_USD": None,
+                salida.append({**base, "CODIGO_GENERICO": mejor, "TARIFA_GENERICO_USD": None,
                                "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
-                               "FLAGS": ",".join(flags + ["SIN_TRFPO_PARA_ESE_PAX"])})
+                               "FLAGS": ",".join(flags + ["SIN_GENERICO_PARA_ESE_PAX"])})
                 continue
 
-            # Más de un período de TRFPO cargado para este mismo rango de
-            # pax (ej. TRFPO cambió su tarifa a mitad del período del
-            # transportista): se usa el de MAYOR superposición de fechas
-            # con el período del transportista, y se marca con
-            # MULTIPLES_PERIODOS_TRFPO para no descartar el resto en
-            # silencio — el/la que revise sabe que hay otro(s) período(s)
-            # de TRFPO en tarifas_vigentes.xlsx para ese mismo código/pax.
+            # Más de un período del genérico cargado para este mismo
+            # rango de pax (ej. cambió su tarifa a mitad del período
+            # del específico): se usa el de MAYOR superposición de
+            # fechas con el período del específico, y se marca con
+            # MULTIPLES_PERIODOS_GENERICO para no descartar el resto en
+            # silencio — el/la que revise sabe que hay otro(s)
+            # período(s) del genérico en tarifas_vigentes.xlsx para ese
+            # mismo código/pax.
             if len(candidatas) > 1:
-                flags.append("MULTIPLES_PERIODOS_TRFPO")
+                flags.append("MULTIPLES_PERIODOS_GENERICO")
 
             def _dias(f):
                 return _dias_superposicion(
-                    parsear_fecha(ft["PERIODO_DESDE"]), parsear_fecha(ft["PERIODO_HASTA"]),
+                    parsear_fecha(fe["PERIODO_DESDE"]), parsear_fecha(fe["PERIODO_HASTA"]),
                     parsear_fecha(f["PERIODO_DESDE"]), parsear_fecha(f["PERIODO_HASTA"]))
 
-            fila_trfpo = max(candidatas, key=_dias)
-            if _dias(fila_trfpo) == 0:
+            fila_generico = max(candidatas, key=_dias)
+            if _dias(fila_generico) == 0:
                 flags.append("SIN_SUPERPOSICION_DE_PERIODO")
 
-            tarifa_trfpo = fila_trfpo["TARIFA_USD"]
-            tarifa_transp = ft["TARIFA_USD"]
+            tarifa_generico = fila_generico["TARIFA_USD"]
+            tarifa_especifico = fe["TARIFA_USD"]
             diff_usd = diff_pct = None
-            if tarifa_trfpo is not None and tarifa_transp is not None:
-                diff_usd = round(tarifa_transp - tarifa_trfpo, 2)
-                if tarifa_trfpo:
-                    diff_pct = round((tarifa_transp / tarifa_trfpo - 1) * 100, 2)
+            if tarifa_generico is not None and tarifa_especifico is not None:
+                diff_usd = round(tarifa_especifico - tarifa_generico, 2)
+                if tarifa_generico:
+                    diff_pct = round((tarifa_especifico / tarifa_generico - 1) * 100, 2)
             else:
                 flags.append("SIN_TARIFA_USD_PARA_COMPARAR")
 
-            salida.append({**base, "CODIGO_TRFPO": mejor,
-                           "PERIODO_TRFPO_DESDE": fila_trfpo["PERIODO_DESDE"],
-                           "PERIODO_TRFPO_HASTA": fila_trfpo["PERIODO_HASTA"],
-                           "TARIFA_TRFPO_USD": tarifa_trfpo,
+            salida.append({**base, "CODIGO_GENERICO": mejor,
+                           "PERIODO_GENERICO_DESDE": fila_generico["PERIODO_DESDE"],
+                           "PERIODO_GENERICO_HASTA": fila_generico["PERIODO_HASTA"],
+                           "TARIFA_GENERICO_USD": tarifa_generico,
                            "DIFERENCIA_USD": diff_usd, "DIFERENCIA_PCT": diff_pct,
                            "FLAGS": ",".join(flags)})
     return salida
@@ -1452,13 +1540,14 @@ def construir_comparacion_gap(filas):
 
 def main():
     modo = (MODO or "COMPLETO").strip().upper()
-    if modo not in ("SOLO_GENERICO", "SOLO_TRANSPORTISTA", "COMPLETO"):
+    modo = {"SOLO_TRANSPORTISTA": "SOLO_ESPECIFICOS"}.get(modo, modo)  # alias viejo
+    if modo not in ("SOLO_GENERICO", "SOLO_ESPECIFICOS", "COMPLETO"):
         raise ValueError(f"MODO inválido: {MODO!r} — usar SOLO_GENERICO, "
-                          f"SOLO_TRANSPORTISTA o COMPLETO")
+                          f"SOLO_ESPECIFICOS o COMPLETO")
     incluir_generico = modo in ("SOLO_GENERICO", "COMPLETO")
-    incluir_transportistas = modo in ("SOLO_TRANSPORTISTA", "COMPLETO")
+    incluir_especificos = modo in ("SOLO_ESPECIFICOS", "COMPLETO")
     print(f"MODO={modo} (genérico: {'sí' if incluir_generico else 'no'}, "
-          f"transportistas: {'sí' if incluir_transportistas else 'no'})")
+          f"específicos: {'sí' if incluir_especificos else 'no'})")
 
     _montar_drive_si_corresponde()
 
@@ -1472,7 +1561,7 @@ def main():
     try:
         login(driver)
 
-        cola = descubrir_cola(driver, COMPARACIONES, incluir_generico, incluir_transportistas)
+        cola = descubrir_cola(driver, COMPARACIONES, incluir_generico, incluir_especificos)
         if LIMIT_PRUEBA:
             print(f"\n⚠ LIMIT_PRUEBA={LIMIT_PRUEBA} — procesando sólo los primeros "
                   f"{LIMIT_PRUEBA} códigos de {len(cola)} descubiertos. Poner "
@@ -1485,7 +1574,8 @@ def main():
             try:
                 buscar_producto(driver, item["location"], item["supplier"],
                                  item["codigo"], service_type=item["service_type"])
-                tarifas = leer_tarifa_vigente_componente(driver, item["codigo"])
+                tarifas = leer_tarifa_vigente_componente(driver, item["codigo"],
+                                                          price_code=item["price_code"])
                 if not tarifas:
                     print(f"    ⚠ Sin tarifas leídas para {item['codigo']}")
                 for t in tarifas:
@@ -1497,6 +1587,7 @@ def main():
                         "SUPPLIER": item["supplier"],
                         "PRODUCT_CODE": item["codigo"],
                         "ES_GENERICO": item["es_generico"],
+                        "GENERICO": item["generico"],
                         "PERIODO_DESDE": t.get("periodo_desde", ""),
                         "PERIODO_HASTA": t.get("periodo_hasta", ""),
                         "PRICE_CODE": t.get("price_code", ""),
@@ -1530,18 +1621,17 @@ def main():
     print(f"\n✅ {len(filas_salida)} filas escritas en {OUTPUT_XLSX}")
 
     if incluir_generico:
-        guardar_cache_trfpo(filas_salida)
+        guardar_cache_generico(filas_salida)
 
     if modo == "SOLO_GENERICO":
         print("\nMODO=SOLO_GENERICO: no se calcula comparación de gap en esta "
-              "corrida (no se extrajo ningún transportista). Corré "
-              "MODO=SOLO_TRANSPORTISTA para comparar contra alguno usando este "
-              "cache de TRFPO.")
+              "corrida (no se extrajo ningún específico). Corré "
+              "MODO=SOLO_ESPECIFICOS para comparar contra alguno usando este cache.")
         return
 
     filas_para_comparacion = filas_salida
-    if modo == "SOLO_TRANSPORTISTA":
-        filas_para_comparacion = cargar_cache_trfpo(COMPARACIONES) + filas_salida
+    if modo == "SOLO_ESPECIFICOS":
+        filas_para_comparacion = cargar_cache_generico(COMPARACIONES) + filas_salida
 
     print("\n🔄 Calculando comparación de gap (Fase 3)...")
     comparacion = construir_comparacion_gap(filas_para_comparacion)

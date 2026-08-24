@@ -1,4 +1,4 @@
-# Diseño: TRFPO (genérico) vs tarifarios reales de transportistas
+# Diseño: genérico (TRFPO/PEAPO/GUIAPO) vs tarifarios reales de específicos
 
 Ver `BRIEF.md` para el pedido de negocio completo. Este documento registra
 las decisiones de diseño tomadas durante la construcción (algunas
@@ -37,12 +37,20 @@ la extracción de TRFPO...".
 **`DIFERENCIA_PCT` con signo %**: visible en el Excel sin cambiar el
 valor guardado. Ver esa sección.
 
+**Generalización a PEAPO/GUIAPO (y cualquier otro genérico futuro)**:
+`COMPARACIONES` ya no está atado a TRFPO — es una lista de relaciones
+genérico/específico independientes, cada una con su propio genérico,
+service type, específicos y Price Code. Ver "Generalización: soporte
+para múltiples relaciones genérico/específico (PEAPO, GUIAPO, ...)".
+
 **Pendiente**: Fase 4 (Excel final con el gap resaltado/formateado) sin
 empezar. Backlog restante: generar una fila por cada período de TRFPO
 cuando hay más de uno superpuesto en vez de sólo el de mayor
 superposición (ver "Visibilidad de qué período se comparó"); scroll de
 `listar_codigos_supplier` sigue sin ser 100% confiable de corrida a
-corrida (ver "Scroll virtual").
+corrida (ver "Scroll virtual"); PEAPO/GUIAPO están soportados en el
+código pero sin validar aún contra Tourplan real (sólo TRFPO fue
+validado con corridas reales).
 
 ## Alcance
 
@@ -565,3 +573,97 @@ Otros hallazgos de datos (no del algoritmo) que salieron de la corrida,
 - `JCT324` ("City 3hs - Japon (6/14 pax)") queda
   `SIN_VEHICULO_PARSEADO`: a diferencia de sus filas hermanas
   (`JCT319`/`JCT342`), a su descripción le falta el texto del vehículo.
+
+## Generalización: soporte para múltiples relaciones genérico/específico (PEAPO, GUIAPO, ...)
+
+Pedido de la usuaria: que Fase 1 + Fase 3 funcionen no sólo para TRFPO
+vs. transportistas, sino también para PEAPO (service type PJ) y GUIAPO
+(service type GU), y que quede abierta la puerta a cualquier otra
+relación genérico/específico que surja más adelante, sin tener que
+volver a tocar código cada vez.
+
+**Por qué no hizo falta cambiar el algoritmo**: el matching
+(`_mejor_prefijo_generico` en la versión embebida, renombrado desde
+`_mejor_prefijo_trfpo`; `mejor_prefijo_trfpo` de `matching_engine.py`
+en el standalone) es puro longest-prefix-match sobre strings — nunca
+dependió de que el genérico fuera TRFPO específicamente. Lo único que
+había que generalizar era la configuración y el naming, más un caso de
+diseño nuevo: qué pasa cuando dos genéricos comparten la misma
+`LOCATION`.
+
+**`COMPARACIONES` como lista de relaciones independientes**: cada
+elemento de `COMPARACIONES` ya no asume TRFPO — trae su propio
+`generico`, `service_type`, `location`, `especificos` (lista de
+códigos de proveedor específico) y `price_code`. Agregar PEAPO o
+GUIAPO es agregar un diccionario más a la lista, sin tocar el resto del
+script. Se dejaron ejemplos comentados de PEAPO (`service_type: "PJ"`)
+y GUIAPO (`service_type: "GU"`) directamente en el archivo.
+
+**Compatibilidad hacia atrás en la config**: la clave vieja
+`"transportistas"` sigue funcionando como alias de `"especificos"`
+(`comp.get("especificos", comp.get("transportistas", []))`), y el
+valor viejo de `MODO`, `"SOLO_TRANSPORTISTA"`, se sigue aceptando como
+alias de `"SOLO_ESPECIFICOS"`. Esto evita romper una `COMPARACIONES`/
+`MODO` que la usuaria ya haya dejado editada de una corrida anterior.
+Los nombres de columnas y de banderas en los Excel de salida, en
+cambio, se renombraron limpio (sin alias) — son artefactos generados
+en cada corrida, no configuración escrita a mano, así que no hay nada
+que se rompa por el rename: `CODIGO_TRFPO`→`CODIGO_GENERICO`,
+`SUPPLIER_TRANSPORTISTA`→`SUPPLIER_ESPECIFICO`,
+`CODIGO_TRANSPORTISTA`→`CODIGO_ESPECIFICO`, `TARIFA_TRFPO_USD`→
+`TARIFA_GENERICO_USD`, `TARIFA_TRANSPORTISTA_USD`→
+`TARIFA_ESPECIFICO_USD`, y las banderas `SIN_MATCH_TRFPO`→
+`SIN_MATCH_GENERICO`, `SIN_TRFPO_PARA_ESE_PAX`→
+`SIN_GENERICO_PARA_ESE_PAX`, `MULTIPLES_PERIODOS_TRFPO`→
+`MULTIPLES_PERIODOS_GENERICO`.
+
+**Price Code por relación**: no está confirmado que PEAPO/GUIAPO usen
+la misma convención de Price Code "TR" que TRFPO, así que cada entrada
+de `COMPARACIONES` tiene su propio `"price_code"`; si no se especifica,
+se usa el default global `PRICE_CODE_DEFAULT` (sigue siendo `"TR"`).
+
+**Caché por genérico, no sólo por location**: el archivo de caché de
+`MODO=SOLO_GENERICO` pasó de `tarifas_trfpo_<LOCATION>.xlsx` a
+`tarifas_generico_<GENERICO>_<LOCATION>.xlsx`, agrupando por
+`(SUPPLIER, LOCATION)` en vez de sólo `LOCATION` — necesario porque
+TRFPO y PEAPO/GUIAPO pueden compartir la misma `LOCATION` (ej. BUE) y
+antes se habrían pisado entre sí en el mismo archivo.
+
+**Bug propio encontrado y corregido antes de terminar (no reportado
+por la usuaria)**: el primer intento de generalizar
+`construir_comparacion_gap` calculaba una variable `clave = (LOCATION,
+SUPPLIER si es genérico)` pero después agrupaba sólo por `LOCATION` al
+armar los candidatos — es decir, si TRFPO y PEAPO compartieran alguna
+vez la misma `LOCATION`, sus filas se habrían mezclado en el matching
+sin ningún aviso, exactamente el bug que se estaba tratando de evitar.
+Se corrigió agregando una columna nueva `GENERICO` a
+`COLS_TARIFAS`/`tarifas_vigentes.xlsx`: autorreferencial en las filas
+del genérico (`GENERICO == SUPPLIER`) y con el código del genérico de
+la relación en las filas de cada específico. Con esa columna,
+`construir_comparacion_gap` (versión embebida) y `construir_comparacion`
+(`comparacion_gap.py` standalone) filtran los candidatos genéricos de
+cada fila específica por `GENERICO` antes de aplicar el
+longest-prefix-match, en vez de agrupar sólo por `LOCATION`. Si el
+Excel de entrada es de una corrida vieja y no trae la columna
+`GENERICO` (caso de `comparacion_gap.py` leyendo un
+`tarifas_vigentes.xlsx` anterior a este cambio), ambas versiones caen
+de nuevo al agrupado por `LOCATION` únicamente, para no romper
+compatibilidad con archivos ya generados.
+
+**Qué se dejó explícitamente sin generalizar**: `matching_engine.py`
+(Fase 2) — parsea vehículo, rango de pax, banderas JAPON/CRUCERO/
+CASO_ESPECIAL_SIB y categoría de servicio desde el `Description` de
+cada código, lógica intrínsecamente del dominio de transporte. Sólo lo
+usa `test_matching.py` para validar offline contra los CSV de
+`muestras/` — no forma parte del pipeline en vivo de Fase 1 + Fase 3
+que sí necesita soportar PEAPO/GUIAPO. Generalizarlo habría sido
+trabajo no pedido y sin caso de uso real todavía.
+
+**Sin validar aún contra Tourplan real**: a diferencia de TRFPO
+(validado con varias corridas reales, ver "Estado actual"), el soporte
+para PEAPO y GUIAPO es sólo a nivel de código — no se corrió todavía
+contra Tourplan Test con datos reales de esos dos genéricos. Antes de
+usarlo en producción conviene una corrida con `MODO=SOLO_GENERICO`
+sobre PEAPO/GUIAPO para confirmar que el Price Code `"TR"` (o el que
+corresponda) y el resto de los supuestos (formato de código,
+service type) se sostienen igual que con TRFPO.
