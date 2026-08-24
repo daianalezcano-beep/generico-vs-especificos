@@ -1238,6 +1238,26 @@ def leer_tarifa_vigente_componente(driver, codigo, price_code=None):
 
 # ── Cola de trabajo y moneda ─────────────────────────────────────────
 
+def _validar_comparaciones(comparaciones):
+    """Chequea que cada entrada de COMPARACIONES tenga lo mínimo
+    indispensable ("location" y "generico", no vacíos) ANTES de abrir
+    Chrome y loguear — un typo al editar/agregar una relación (ej. al
+    descomentar el ejemplo de PEAPO/GUIAPO y olvidar la línea
+    "generico") antes explotaba con un KeyError críptico en
+    descubrir_cola, después de ya haber gastado una de las sesiones
+    limitadas de licencia de Tourplan."""
+    if not comparaciones:
+        raise ValueError("COMPARACIONES está vacío — agregar al menos una relación "
+                          "genérico/específico antes de correr.")
+    for i, comp in enumerate(comparaciones):
+        faltantes = [clave for clave in ("location", "generico") if not comp.get(clave)]
+        if faltantes:
+            raise ValueError(
+                f"COMPARACIONES[{i}] ({comp!r}) no tiene {', '.join(faltantes)!s} "
+                f"— revisar que la entrada esté completa (comparar contra el ejemplo "
+                f"de TRFPO al principio del archivo).")
+
+
 def descubrir_cola(driver, comparaciones, incluir_generico=True, incluir_especificos=True):
     """A partir de COMPARACIONES (una entrada por relación genérico/
     específico — location + supplier genérico + lista de específicos,
@@ -1548,6 +1568,8 @@ def main():
     incluir_especificos = modo in ("SOLO_ESPECIFICOS", "COMPLETO")
     print(f"MODO={modo} (genérico: {'sí' if incluir_generico else 'no'}, "
           f"específicos: {'sí' if incluir_especificos else 'no'})")
+
+    _validar_comparaciones(COMPARACIONES)
 
     _montar_drive_si_corresponde()
 

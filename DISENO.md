@@ -667,3 +667,18 @@ usarlo en producción conviene una corrida con `MODO=SOLO_GENERICO`
 sobre PEAPO/GUIAPO para confirmar que el Price Code `"TR"` (o el que
 corresponda) y el resto de los supuestos (formato de código,
 service type) se sostienen igual que con TRFPO.
+
+**Bug real encontrado en la primera corrida post-generalización**:
+la usuaria corrió `MODO=SOLO_GENERICO` y el script logueó en Tourplan
+y recién ahí explotó con `KeyError: 'generico'` dentro de
+`descubrir_cola` — una entrada de `COMPARACIONES` (agregada/editada a
+mano, probablemente al descomentar el ejemplo de PEAPO/GUIAPO) no
+tenía la clave `"generico"`. El problema no es sólo el typo en sí,
+sino que el script ya había gastado una sesión de las limitadas de
+licencia de Tourplan antes de fallar por un error de config. Se agregó
+`_validar_comparaciones(COMPARACIONES)`, llamada al principio de
+`main()` (antes de `_montar_drive_si_corresponde`/`crear_driver`/
+`login`), que chequea que cada entrada tenga `"location"` y
+`"generico"` no vacíos y, si falta alguno, lo reporta con un
+`ValueError` claro (índice de la entrada + el dict completo) sin
+llegar a abrir Chrome.
