@@ -85,6 +85,27 @@ datos reales.
   (pandas) para re-correr SÓLO la comparación sobre un
   `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.
   Uso: `python comparacion_gap.py [tarifas_vigentes.xlsx] [salida.xlsx]`.
+- `extraccion_lista_rates.py` — relevamiento de estado de tarifas:
+  dado un supplier/location/service type (o un código puntual), busca
+  sus product codes en Tourplan, entra a RATES de cada uno y exporta
+  las columnas de la LISTA de períodos (Rate Period, PC, Buy/Sell
+  Currency, Sale Period, Rate Status, Rate Text, Rate Name) **sin abrir
+  ningún período** — pensado para identificar rápido qué tarifas
+  necesitan actualización, no para leer costos por rango de pax. A
+  diferencia de `extraccion_tarifas_vigentes.py`, usa un Excel de
+  entrada como cola de trabajo (hoja `PRODUCTOS`, ESTADO/OBSERVACIONES,
+  guardado fila a fila y resumible — ver skill
+  `armando-excel-como-cola-de-trabajo`), no una lista editada al
+  principio del script. Ninguno de LOCATION/SUPPLIER/SERVICE
+  TYPE/CODIGO es obligatorio por sí solo (vacío = "todos" en esa
+  dimensión), pero deben venir completos al menos 2 de esos 4 campos.
+  Por fila: si RATE FROM/RATE TO quedan vacíos, exporta sólo el primer
+  período de la lista tal cual la entrega Tourplan (el más
+  reciente/"último", sin ordenar nada); si se completan, exporta TODOS
+  los períodos que se solapen con ese rango. Salida: hoja `RATES` en el
+  mismo archivo, una fila por período exportado. Corriendo el script
+  sin ningún Excel todavía creado, lo genera con una fila de ejemplo y
+  comentarios por columna.
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
   por location/categoría/guía (editable, sin hardcodear en código). Ya
   no lo usa Fase 3 (ver DISENO.md) — queda por si hace falta en Fase 4.
