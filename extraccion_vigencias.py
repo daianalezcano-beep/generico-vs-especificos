@@ -1,5 +1,8 @@
 # ============================================================
-# RELEVAMIENTO DE RATES — lista de períodos SIN entrar a ninguno
+# RELEVAMIENTO DE VIGENCIAS — lista de períodos de RATES, SIN entrar
+# a ninguno. NO es extracción de tarifas: no lee ningún valor de costo,
+# sólo la vigencia/estado de cada período (fechas, Price Code, moneda,
+# estado, nombre).
 # Google Colab — celda única (mismo formato que los scripts hermanos)
 # ------------------------------------------------------------
 #   Objetivo: dado un supplier/location/service type (o un código
@@ -7,7 +10,7 @@
 #   RATES de cada uno y exportar las columnas que se ven en la LISTA
 #   de períodos (Rate Period, PC, Buy/Sell Currency, Sale Period, Rate
 #   Status, Rate Text, Rate Name) — sin abrir ningún período. Sirve
-#   para relevar rápido en qué estado está la carga de tarifas de un
+#   para relevar rápido en qué estado está la carga de vigencias de un
 #   supplier y detectar cuáles necesitan actualización, sin el costo
 #   de leer la grilla de costos por rango de pax de cada período.
 #
@@ -23,7 +26,7 @@
 #   NO reutiliza _leer_tabla_rates/_extraer_filas_ad/_seleccionar_price_code
 #   del script hermano: esos leen la grilla de costos DENTRO de un
 #   período ya abierto, que acá no hace falta abrir. La lectura nueva
-#   (_leer_lista_rates) usa selectores de clase confirmados por
+#   (_leer_vigencias) usa selectores de clase confirmados por
 #   inspección real de la grilla de LISTA: td.tpcol-rateperiod,
 #   td.tpcol-pricecodecode, td.tpcol-currencycode (aparece 2 veces por
 #   fila — Buy y Sell Currency, en ese orden, sin distinción por clase),
@@ -49,7 +52,7 @@
 #   listar_codigos_supplier) — pero deben venir completos AL MENOS 2 de
 #   estos 4, en cualquier combinación (ej. SERVICE TYPE+LOCATION o
 #   SUPPLIER+CODIGO), para no disparar una búsqueda sin acotar.
-#   Hoja "RATES" (salida, append-only): una fila por período exportado.
+#   Hoja "VIGENCIAS" (salida, append-only): una fila por período exportado.
 # ============================================================
 
 import os, sys, subprocess, importlib, shutil, time, re, traceback
@@ -179,9 +182,9 @@ USERNAME   = "poner minusculas"
 PASSWORD   = "password"
 BASE_URL   = "https://tourplannx.eurotur.com.ar/TourplanNX_Test"
 
-EXCEL_PATH     = "extraccion_lista_rates.xlsx"
+EXCEL_PATH     = "extraccion_vigencias.xlsx"
 HOJA_PRODUCTOS = "PRODUCTOS"
-HOJA_RATES     = "RATES"
+HOJA_VIGENCIAS = "VIGENCIAS"
 SS_DIR         = "screenshots"
 os.makedirs(SS_DIR, exist_ok=True)
 
@@ -862,7 +865,7 @@ def _abrir_rates(driver, codigo):
     ss(driver, f"rates_lista_{codigo[:10]}")
 
 
-def _leer_lista_rates(driver):
+def _leer_vigencias(driver):
     """Lee TODAS las filas de la lista de RATES actualmente visible tal
     cual las devuelve Tourplan (ya ordenadas del período más reciente al
     más viejo — no hace falta ordenar nada acá), sin entrar a ningún
@@ -901,11 +904,11 @@ def _leer_lista_rates(driver):
     return filas
 
 
-def leer_lista_rates_codigo(driver, codigo):
+def leer_vigencias_codigo(driver, codigo):
     """Orquesta: entra a RATES del producto ya en contexto y lee la
     lista completa de períodos (sin abrir ninguno)."""
     _abrir_rates(driver, codigo)
-    periodos = _leer_lista_rates(driver)
+    periodos = _leer_vigencias(driver)
     if not periodos:
         dump(driver, f"rates_sin_periodos_{codigo[:10]}")
     return periodos
@@ -913,7 +916,7 @@ def leer_lista_rates_codigo(driver, codigo):
 
 # ── Excel como cola de trabajo (ver skill armando-excel-como-cola-de-trabajo) ──
 
-RATES_HEADERS = [
+VIGENCIAS_HEADERS = [
     "TIMESTAMP", "LOCATION", "SUPPLIER", "SERVICE TYPE", "CODIGO",
     "RATE PERIOD", "PC", "BUY CURRENCY", "SELL CURRENCY", "SALE PERIOD",
     "RATE STATUS", "RATE TEXT", "RATE NAME",
@@ -965,9 +968,9 @@ def crear_excel_si_no_existe():
     ws.append(["BUE", "1MAD01", "HT", "", "", "", "EJEMPLO",
                "Borrar esta fila y cargar las propias en PENDIENTE", ""])
 
-    ws2 = wb.create_sheet(HOJA_RATES)
-    ws2.append(RATES_HEADERS)
-    for i, h in enumerate(RATES_HEADERS, start=1):
+    ws2 = wb.create_sheet(HOJA_VIGENCIAS)
+    ws2.append(VIGENCIAS_HEADERS)
+    for i, h in enumerate(VIGENCIAS_HEADERS, start=1):
         ws2.cell(row=1, column=i).font = Font(bold=True)
         ws2.column_dimensions[get_column_letter(i)].width = max(14, len(h) + 2)
 
@@ -1006,14 +1009,14 @@ def actualizar_fila_producto(wb, col_idx, row_idx, estado, observaciones):
     wb.save(EXCEL_PATH)
 
 
-def agregar_filas_rates(wb, filas):
+def agregar_filas_vigencias(wb, filas):
     """Append-only: agrega las filas ya leídas a la hoja RATES y guarda.
     No pisa nada de lo ya escrito por corridas/filas anteriores."""
     if not filas:
         return
-    ws = wb[HOJA_RATES]
+    ws = wb[HOJA_VIGENCIAS]
     for fila in filas:
-        ws.append([fila.get(h, "") for h in RATES_HEADERS])
+        ws.append([fila.get(h, "") for h in VIGENCIAS_HEADERS])
     wb.save(EXCEL_PATH)
 
 
@@ -1025,7 +1028,7 @@ def procesar_fila_producto(driver, row):
     correspondan según RATE FROM/RATE TO. Nunca lanza fuera de esta
     función — cualquier fallo de un código puntual se registra en
     OBSERVACIONES y se sigue con el próximo, sin frenar la fila.
-    Devuelve (estado, observaciones, filas_rates).
+    Devuelve (estado, observaciones, filas_vigencias).
 
     Ningún campo es obligatorio por sí solo — un campo vacío significa
     "todos" en esa dimensión (ej. SERVICE TYPE vacío = todos los service
@@ -1057,13 +1060,13 @@ def procesar_fila_producto(driver, row):
         if LIMIT_CODIGOS_PRUEBA:
             items = items[:LIMIT_CODIGOS_PRUEBA]
 
-    filas_rates = []
+    filas_vigencias = []
     fallidos = []
     for item in items:
         cod = item["codigo"]
         try:
             buscar_producto(driver, location, supplier, cod, service_type=service_type)
-            periodos = leer_lista_rates_codigo(driver, cod)
+            periodos = leer_vigencias_codigo(driver, cod)
             if not periodos:
                 fallidos.append(f"{cod}: sin períodos de RATES")
                 continue
@@ -1081,7 +1084,7 @@ def procesar_fila_producto(driver, row):
             ts = datetime.now().isoformat(timespec="seconds")
             for i in idxs:
                 p = periodos[i]
-                filas_rates.append({
+                filas_vigencias.append({
                     "TIMESTAMP": ts, "LOCATION": location, "SUPPLIER": supplier,
                     "SERVICE TYPE": service_type, "CODIGO": cod,
                     "RATE PERIOD": p["rate_period"], "PC": p["pc"],
@@ -1095,19 +1098,19 @@ def procesar_fila_producto(driver, row):
             fallidos.append(f"{cod}: error inesperado ({e})")
             ss(driver, f"error_{cod[:10]}")
 
-    observaciones = f"{len(filas_rates)} período(s) exportado(s) de {len(items)} código(s)"
+    observaciones = f"{len(filas_vigencias)} período(s) exportado(s) de {len(items)} código(s)"
     if fallidos:
         observaciones += " — fallidos: " + "; ".join(fallidos[:5])
         if len(fallidos) > 5:
             observaciones += f" (+{len(fallidos) - 5} más)"
 
-    estado = "OK" if filas_rates else "ERROR"
-    return estado, observaciones, filas_rates
+    estado = "OK" if filas_vigencias else "ERROR"
+    return estado, observaciones, filas_vigencias
 
 
 def main():
     print("=" * 60)
-    print("  EXTRACCIÓN DE LISTA DE RATES (sin entrar a los períodos)")
+    print("  EXTRACCIÓN DE VIGENCIAS (lista de RATES, sin entrar a los períodos)")
     print("=" * 60)
     t_inicio = time.time()
 
@@ -1139,9 +1142,9 @@ def main():
                   f"SERVICE TYPE={row.get('SERVICE TYPE') or '(todos)'} "
                   f"CODIGO={row.get('CODIGO') or '(todos)'}")
 
-            estado, observaciones, filas_rates = "ERROR", "Error desconocido", []
+            estado, observaciones, filas_vigencias = "ERROR", "Error desconocido", []
             try:
-                estado, observaciones, filas_rates = procesar_fila_producto(driver, row)
+                estado, observaciones, filas_vigencias = procesar_fila_producto(driver, row)
             except Exception:
                 # Un error en ESTA fila no frena el resto del batch — se
                 # registra y se sigue con la próxima.
@@ -1153,7 +1156,7 @@ def main():
             # Guardar INMEDIATAMENTE (filas RATES + estado de la fila
             # PRODUCTOS) — así una corrida cortada a mitad de camino deja
             # registro de lo ya procesado.
-            agregar_filas_rates(wb, filas_rates)
+            agregar_filas_vigencias(wb, filas_vigencias)
             actualizar_fila_producto(wb, col_idx, row_idx, estado, observaciones)
 
     finally:
