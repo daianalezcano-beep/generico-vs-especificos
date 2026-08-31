@@ -178,15 +178,9 @@ from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
 # ── Config ────────────────────────────────────────────────────
-# Campos como formulario de Colab (#@param) — se completan haciendo clic
-# en el panel de la celda, sin tocar código. { display-mode: "form" }
-# oculta el resto del código de la celda por default y deja sólo este
-# formulario visible, para alguien que solo necesita loguearse y correr.
-# (Descomentar el código: clic derecho sobre la celda → "Form" → "Show code".)
-#@title Configuración de acceso a Tourplan { display-mode: "form" }
-USERNAME = "poner minusculas"  #@param {type:"string"}
-PASSWORD = "password"  #@param {type:"string"}
-BASE_URL = "https://tourplannx.eurotur.com.ar/TourplanNX_Test"  #@param {type:"string"}
+USERNAME   = "poner minusculas"
+PASSWORD   = "password"
+BASE_URL   = "https://tourplannx.eurotur.com.ar/TourplanNX_Test"
 
 EXCEL_PATH     = "extraccion_vigencias.xlsx"
 HOJA_PRODUCTOS = "PRODUCTOS"
