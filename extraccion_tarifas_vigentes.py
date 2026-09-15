@@ -1027,22 +1027,107 @@ def _periodos_en_rango(periodos, desde_str, hasta_str):
 # la etiqueta de fila) ──────────────────────────────────────────────
 
 def _leer_tabla_rates(driver):
-    return driver.execute_script("""
-        for(var t of document.querySelectorAll('table')){
-            var ths = Array.from(t.querySelectorAll('th'));
-            if(ths.some(h => h.innerText.includes('GROUP COST') ||
-                              h.innerText.includes('COST'))){
-                return {
-                    headers: ths.map(h => h.innerText.trim()),
-                    rows: Array.from(t.querySelectorAll('tbody tr')).map(tr => ({
+    """Lee la grilla de rangos de pax de RATES (hasta 24 filas) con
+    manejo de scroll virtual (Angular CDK) — ver skill
+    recorriendo-grillas-virtuales-de-tourplan. Bug real encontrado por
+    la usuaria: sin este manejo, para un genérico con varios pax breaks
+    (ej. TRFPO con "1-10 AD", "11-20 AD", etc.) sólo se capturaba la
+    fila visible en el viewport en ese momento — normalmente la
+    primera — perdiendo el resto de los rangos de pax silenciosamente
+    (sin error, sólo una tarifa incorrecta al comparar contra un
+    específico de otro rango). Se deduplica por el contenido de las
+    celdas (la etiqueta de rango de pax, ej. "1-10 AD", es única por
+    fila) en vez de por índice/posición, igual que el resto de las
+    grillas virtuales de Tourplan."""
+
+    def _leer_headers():
+        return driver.execute_script("""
+            for(var t of document.querySelectorAll('table')){
+                var ths = Array.from(t.querySelectorAll('th'));
+                if(ths.some(h => h.innerText.includes('GROUP COST') ||
+                                  h.innerText.includes('COST'))){
+                    return ths.map(h => h.innerText.trim());
+                }
+            }
+            return null;
+        """)
+
+    def _leer_filas_visibles():
+        return driver.execute_script("""
+            for(var t of document.querySelectorAll('table')){
+                var ths = Array.from(t.querySelectorAll('th'));
+                if(ths.some(h => h.innerText.includes('GROUP COST') ||
+                                  h.innerText.includes('COST'))){
+                    return Array.from(t.querySelectorAll('tbody tr')).map(tr => ({
                         celdas: Array.from(tr.querySelectorAll('td')).map(td => td.innerText.trim()),
                         inputs: Array.from(tr.querySelectorAll('input')).map(i => i.value.trim())
-                    }))
-                };
+                    }));
+                }
             }
-        }
-        return null;
-    """)
+            return [];
+        """)
+
+    def _contenedor_scroll():
+        return driver.execute_script("""
+            var cdk = document.querySelector('cdk-virtual-scroll-viewport');
+            if(cdk) return cdk;
+            var candidates = ['[class*="rates"]', 'tp-rates', '[class*="rate"]'];
+            for(var s of candidates){
+                var el = document.querySelector(s);
+                if(el && el.scrollHeight > el.clientHeight) return el;
+            }
+            var tbl = document.querySelector('table');
+            if(tbl){
+                var el = tbl.parentElement;
+                while(el && el !== document.body){
+                    var st = getComputedStyle(el);
+                    var canScroll = (st.overflow === 'auto' || st.overflow === 'scroll' ||
+                                     st.overflowY === 'auto' || st.overflowY === 'scroll');
+                    if(canScroll && el.scrollHeight > el.clientHeight + 10) return el;
+                    el = el.parentElement;
+                }
+            }
+            return document.scrollingElement || document.body;
+        """)
+
+    def _scroll_a(pos, container):
+        if container:
+            driver.execute_script("arguments[0].scrollTop = arguments[1];", container, pos)
+        driver.execute_script("window.scrollTo(0, arguments[0]);", pos)
+
+    headers = _leer_headers()
+    if not headers:
+        return None
+
+    scroll_container = _contenedor_scroll()
+    filas_vistas = {}
+    scroll_pos = 0
+    scroll_step = 60
+    sin_cambio = 0
+    # Como mucho 24 pax breaks conocidos en Rates — 60 pasos de 60px
+    # (3.600px) sobra de margen, con corte a las 4 iteraciones
+    # consecutivas sin filas nuevas (mismo criterio que
+    # leer_pcm_list_package_header en Used In).
+    for _ in range(60):
+        nuevas = 0
+        for row in _leer_filas_visibles():
+            celdas = row.get("celdas") or []
+            clave = " | ".join(celdas)
+            if clave and clave not in filas_vistas:
+                filas_vistas[clave] = row
+                nuevas += 1
+        if nuevas == 0:
+            sin_cambio += 1
+            if sin_cambio >= 4:
+                break
+        else:
+            sin_cambio = 0
+        scroll_pos += scroll_step
+        _scroll_a(scroll_pos, scroll_container)
+        time.sleep(0.2 * VELOCIDAD)
+
+    _scroll_a(0, scroll_container)
+    return {"headers": headers, "rows": list(filas_vistas.values())}
 
 
 def _listar_tablas_pagina(driver):

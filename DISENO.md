@@ -195,6 +195,50 @@ de saber "llegué al final" (ej. un contador de resultados visible en
 algún lado de la pantalla de Product Search) en vez de inferirlo por
 scrolls sin novedad.
 
+## Bug real: la grilla de pax breaks de RATES también usa scroll virtual
+
+La usuaria corrió el script y reportó que, para el genérico, no
+diferenciaba el valor correcto según el rango de pax — "sólo trajo la
+primera línea" en vez de matchear el pax break correspondiente. La
+lógica de matching por pax range (en `construir_comparacion_gap` y en
+`comparacion_gap.py`, ver esas secciones) ya filtraba correctamente por
+`PAX_DESDE`/`PAX_HASTA` — el problema no estaba ahí, sino un paso
+antes: `_leer_tabla_rates` (la función que lee la grilla de rangos de
+pax de un período ya abierto) usaba
+`document.querySelectorAll('table')`/`tr.querySelectorAll('td')` en una
+sola pasada, sin manejar scroll. Un genérico con varios pax breaks
+cargados (ej. TRFPO con "1-10 AD", "11-20 AD", "21-30 AD", etc.) sólo
+devolvía la fila visible en el viewport en ese momento — normalmente
+la primera — perdiendo el resto de los rangos **en silencio**: no había
+ningún error, sólo faltaban filas en `tarifas_vigentes.xlsx`, así que
+al comparar un específico de un rango de pax que no era el primero, no
+encontraba un genérico con ese pax range (`SIN_GENERICO_PARA_ESE_PAX`)
+o, peor, si el matching de todas formas encontraba una fila (la única
+que se había leído), la comparaba igual aunque fuera de otro rango de
+pax.
+
+Es exactamente el mismo patrón de bug que ya se había encontrado y
+documentado en `listar_codigos_supplier` (ver sección de arriba) y que
+describe la skill `recorriendo-grillas-virtuales-de-tourplan`: Tourplan
+usa Angular CDK virtual scroll en la grilla de Rates igual que en Used
+In y en los resultados de Product Search — la única diferencia es la
+cantidad de filas (acá hasta 24 pax breaks, no ~1900), así que el
+límite anterior de "una sola lectura sin scroll" alcanzaba a mostrar 1-2
+filas en pantalla y listo.
+
+**Fix**: `_leer_tabla_rates` ahora sigue el mismo patrón confirmado que
+`leer_pcm_list_package_header` (Used In): detecta el contenedor
+scrolleable (`cdk-virtual-scroll-viewport` primero, después candidatos
+por clase relacionados a "rates", después el primer ancestro con
+overflow real de la tabla), scrollea en pasos de 60px hasta 60
+iteraciones (o 4 seguidas sin filas nuevas), y deduplica por el
+contenido de las celdas de cada fila — la etiqueta de rango de pax (ej.
+"1-10 AD") es única por fila dentro de un mismo período, así que sirve
+de clave sin depender de índice/posición. No hizo falta tocar
+`_extraer_filas_ad` (ya iteraba sobre todas las filas que le llegaran)
+ni la lógica de matching por pax range — el bug estaba enteramente en
+la lectura, no en la comparación.
+
 ## Períodos y Price Code
 
 **Hallazgo real de la primera corrida**: abrir RATES no muestra
