@@ -31,7 +31,11 @@ datos reales.
   6HOUS1 en BUE, matching limpio en 204/208 filas) — bugs reales
   encontrados y corregidos en el camino, ver DISENO.md. PEAPO/GUIAPO
   están soportados en el código pero todavía sin validar contra
-  Tourplan real.
+  Tourplan real. El gap se calcula por VEHÍCULO (sufijo de código +
+  categoría/guía parseadas de la Description, contra
+  `config/tabla_bases_vehiculo_pax.csv`), no por el pax bruto que
+  reportó el específico — ver DISENO.md "Bug real: matching por
+  vehículo".
 - ⏳ Fase 4 (salida Excel final con el gap resaltado): pendiente.
 
 ## Estructura
@@ -86,8 +90,16 @@ datos reales.
   `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.
   Uso: `python comparacion_gap.py [tarifas_vigentes.xlsx] [salida.xlsx]`.
 - `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
-  por location/categoría/guía (editable, sin hardcodear en código). Ya
-  no lo usa Fase 3 (ver DISENO.md) — queda por si hace falta en Fase 4.
+  por location/categoría/guía (editable, sin hardcodear en código).
+  Fase 3 la usa para elegir el tramo de TRFPO que le corresponde a cada
+  código específico según su vehículo (por sufijo de código, ej. "19" =
+  Sprinter 19) y categoría/guía (parseadas de la Description), en vez
+  de comparar contra el PAX_DESDE/HASTA que reportó el específico en su
+  propia tarifa — ver DISENO.md "Bug real: matching por vehículo".
+  `comparacion_gap.py` la lee directo de este archivo;
+  `extraccion_tarifas_vigentes.py` (celda única de Colab, sin archivos
+  hermanos disponibles) tiene su propia copia embebida — mantenerlas
+  sincronizadas si se edita el CSV.
 - `muestras/` — 3 Product List reales (TRFPO + 2 transportistas, BUE)
   usados para validar el matching.
 

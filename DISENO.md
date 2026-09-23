@@ -726,3 +726,109 @@ licencia de Tourplan antes de fallar por un error de config. Se agregó
 `"generico"` no vacíos y, si falta alguno, lo reporta con un
 `ValueError` claro (índice de la entrada + el dict completo) sin
 llegar a abrir Chrome.
+
+## Bug real: matching por vehículo, no sólo por pax bruto
+
+La usuaria corrió el script sobre un específico real (Sprinter 19,
+código `AEEZ19`) y el gap salió mal: el específico había cargado su
+propia tarifa como un único tramo "PAX 1 a 11", pero TRFPO para esa
+misma ruta (`AEEZ`) tiene 6 tramos con precios distintos (1-2, 3-4,
+**5-11**, 12-15, 16-35, 36-41). Como el rango del específico (1-11) se
+solapaba numéricamente con los primeros 3 tramos de TRFPO a la vez,
+`construir_comparacion_gap` (y `comparacion_gap.py`) elegían entre esos
+candidatos por mayor superposición de *fechas* — como las fechas eran
+iguales entre los tres, el empate lo ganaba el primero de la lista, que
+resultaba ser el tramo de Auto (1-2) en vez del de Sprinter 19 (5-11).
+El bug no estaba en el algoritmo de matching por código (longest-prefix
+seguía encontrando bien la ruta `AEEZ`) sino en no saber, de entre los
+tramos de pax de esa ruta, cuál le corresponde al vehículo real del
+código específico — el rango que el específico reportó en su propia
+tarifa no tiene por qué coincidir con el desglose de TRFPO.
+
+**Confirmado por la usuaria (DISENO.md "Corrección a BRIEF.md")**: el
+sufijo del código específico SÍ está estandarizado (mismo significado
+siempre, ej. "19"=Sprinter 19, "24"=Minibus, "42"=Bus, "AU"=Auto) — así
+que, a diferencia del resto del matching (que nunca decodificó el
+sufijo), acá sí conviene usarlo: es una fuente mucho más confiable que
+tratar de inferir el vehículo de la `Description`.
+
+**Diseño acordado con la usuaria** (dos preguntas resueltas antes de
+implementar):
+1. **Categoría de servicio y guía**: se clasifican de la `Description`
+   del código específico, reusando tal cual
+   `detectar_flags`/`clasificar_categoria`/`clasificar_guia` de
+   `matching_engine.py` (Fase 2, sin cambios) — hacía falta que Fase 1
+   guardara la `Description` (ya la leía en `descubrir_cola`, sólo
+   faltaba persistirla): se agregó la columna `DESCRIPCION` a
+   `COLS_TARIFAS`/`tarifas_vigentes.xlsx`.
+2. **Vehículo V9 (Van 9 pax)**: existe como vehículo real en la flota
+   de algunos transportistas, pero la usuaria confirmó que **TRFPO no
+   lo valoriza como tramo propio** — no hay ningún tramo de TRFPO que
+   le corresponda. Un código específico con sufijo "V9" se excluye
+   directamente de la comparación (bandera
+   `VEHICULO_V9_NO_VALORIZADO_TRFPO`, sin `TARIFA_GENERICO_USD`) en vez
+   de forzar un match contra el tramo numéricamente más parecido. Esto
+   ya era así en `config/tabla_bases_vehiculo_pax.csv` (V9 nunca
+   apareció ahí) — sólo faltaba que el matching de Fase 3 lo respetara
+   en vez de ignorarlo.
+
+**Tabla de bases refinada**: al pedir el detalle completo de pax por
+vehículo/categoría/guía a la usuaria, salió que el `Bus` de BUE (que en
+`tabla_bases_vehiculo_pax.csv` era un único tramo 20-41 en EXCURSION y
+16-35 en TRASLADO) en realidad son DOS vehículos con tramos de pax
+distintos: **Bus 37 asientos** y **Bus** (42 asientos) — se separaron
+en el CSV (`BUE,EXCURSION,Bus 37 asientos,CON_GUIA,20,33` +
+`BUE,EXCURSION,Bus,CON_GUIA,34,41`, e igual para TRASLADO). También se
+corrigieron dos valores de JAPON en BUE que no coincidían con la tabla
+nueva de la usuaria (Auto pasó de 1-2 a 1-1, H1/VITO de 3-3 a 2-3) —
+sin confirmar todavía por qué el CSV original tenía esos valores
+distintos (posible desprolijidad de carga anterior, o un caso real que
+haya cambiado); FTE/USH no se tocaron (la usuaria sólo dio el detalle
+para BUE).
+
+**Implementación** (duplicada en ambos archivos, mismo criterio que el
+resto de Fase 3 — ver "Generalización" más arriba):
+- `SUFIJO_VEHICULO`: sufijo de código (últimos 2 caracteres) → nombre
+  de vehículo, EXACTO como aparece en la columna `VEHICULO` de
+  `tabla_bases_vehiculo_pax.csv`. Ojo: no usa `normalizar_vehiculo` de
+  `matching_engine.py` para este join — ese normalizador colapsa
+  cualquier cosa que empiece con "bus" (incluido "Bus 37 asientos") a
+  la clave genérica `BUS`, lo que volvería a mezclar Bus37/Bus42. Se
+  filtra por el texto crudo de `VEHICULO`.
+- `_vehiculo_por_sufijo(codigo)`: devuelve el vehículo, o
+  `"NO_VALORIZADO"` para V9, o `None` si el sufijo no está contemplado
+  todavía (bandera `SUFIJO_VEHICULO_DESCONOCIDO_<sufijo>`, cae al
+  comportamiento anterior de comparar contra el pax bruto del
+  específico — no rompe, sólo avisa).
+- `_pax_esperado_vehiculo(...)`: busca en la tabla de bases el
+  (`pax_desde`, `pax_hasta`) real de ese vehículo/categoría/guía; si no
+  hay fila para esa guía puntual (varias categorías sólo tienen
+  `CON_GUIA` cargado) cae a buscar sin filtrar por guía antes de
+  rendirse (bandera `SIN_BASE_VEHICULO_PAX_<categoria>_<vehiculo>`).
+- El matching contra los tramos de TRFPO pasó de "mayor superposición
+  de *fechas*" a "mayor superposición de *pax* con el rango esperado
+  del vehículo, y ante empate mayor superposición de fechas" — cambia
+  el criterio de desempate de raíz, que era la causa del bug.
+- `extraccion_tarifas_vigentes.py` (celda única de Colab, sin archivos
+  hermanos disponibles) embebe su propia copia de
+  `TABLA_BASES_VEHICULO_PAX` (lista de dicts, generada a partir del
+  CSV) y una copia reducida de la clasificación de categoría/guía de
+  `matching_engine.py` — mantener sincronizadas a mano si se edita
+  cualquiera de las tres fuentes (CSV, `matching_engine.py`, el
+  embebido). `comparacion_gap.py` (script standalone, con archivos
+  hermanos disponibles) en cambio importa directamente
+  `detectar_flags`/`clasificar_categoria`/`clasificar_guia`/
+  `cargar_tabla_bases` de `matching_engine.py` y lee
+  `config/tabla_bases_vehiculo_pax.csv` del disco — menos duplicación,
+  posible porque no tiene la restricción de celda única. Si el archivo
+  de bases no está disponible (`_cargar_tabla_bases_o_none`), cae al
+  comportamiento anterior con la bandera
+  `MATCHING_POR_VEHICULO_DESHABILITADO` en vez de romper la corrida.
+
+**Validado**: reconstruido el caso real (`AEEZ19`, tramos de TRFPO
+1-2/3-4/5-11/12-15/16-35/36-41) contra ambas implementaciones — las dos
+matchean correctamente contra el tramo 5-11 (Sprinter 19 pax) en vez
+del de Auto, y un código con sufijo V9 queda excluido con la bandera
+esperada sin comparación forzada. No corrido todavía contra Tourplan
+real con `MODO=SOLO_ESPECIFICOS` completo (sólo verificado con datos
+sintéticos reproduciendo el caso reportado).

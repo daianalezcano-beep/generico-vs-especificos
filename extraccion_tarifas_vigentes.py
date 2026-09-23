@@ -1385,14 +1385,21 @@ def descubrir_cola(driver, comparaciones, incluir_generico=True, incluir_especif
     return cola
 
 
-COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "GENERICO", "PERIODO_DESDE",
-                "PERIODO_HASTA", "PRICE_CODE", "PAX_DESDE", "PAX_HASTA", "TARIFA_VIGENTE",
-                "MONEDA", "TARIFA_USD", "LOCATION", "TIMESTAMP"]
+COLS_TARIFAS = ["SUPPLIER", "PRODUCT_CODE", "ES_GENERICO", "GENERICO", "DESCRIPCION",
+                "PERIODO_DESDE", "PERIODO_HASTA", "PRICE_CODE", "PAX_DESDE", "PAX_HASTA",
+                "TARIFA_VIGENTE", "MONEDA", "TARIFA_USD", "LOCATION", "TIMESTAMP"]
 # GENERICO: a qué supplier genérico corresponde esta relación (para
 # una fila ES_GENERICO=True, es su propio SUPPLIER; para una fila
 # específica, el "generico" de la entrada de COMPARACIONES de la que
 # vino) — necesario para no mezclar relaciones distintas que comparten
 # location (ej. TRFPO y PEAPO, ambos en BUE) al armar la comparación.
+# DESCRIPCION: la Description del código tal como aparece en el listado
+# de Product Search (ya se leía en descubrir_cola, sólo faltaba
+# guardarla) — necesaria para clasificar categoría de servicio
+# (EXCURSION/TRASLADO/JAPON/CRUCEROS_*) y GUIA/SIN_GUIA de cada código
+# específico, para el matching por vehículo en construir_comparacion_gap
+# (ver DISENO.md "Bug real: matching por vehículo, no sólo por pax
+# bruto").
 
 
 def _montar_drive_si_corresponde():
@@ -1514,6 +1521,246 @@ COLS_GAP = [
 ]
 
 
+# ── Vehículo por sufijo de código + tabla de bases pax/vehículo (para
+# elegir el tramo de pax de TRFPO que realmente le corresponde a cada
+# código específico, en vez del PAX_DESDE/HASTA que reportó el
+# específico en su propia tarifa — ver DISENO.md "Bug real: matching
+# por vehículo, no sólo por pax bruto") ──────────────────────────────
+
+# Sufijo de código -> nombre de vehículo (DISENO.md "Corrección a
+# BRIEF.md": los sufijos SÍ están estandarizados, mismo significado
+# siempre, independiente del transportista). V9 (Van 9 pax) es un
+# vehículo real de algunos transportistas, pero TRFPO no lo valoriza
+# como tramo propio (confirmado por la usuaria) — se excluye de la
+# comparación en vez de forzar un match contra un tramo que no le
+# corresponde.
+SUFIJO_VEHICULO = {
+    "AU": "Auto",
+    "MV": "H1/VITO",
+    "15": "Sprinter 15 pax",
+    "19": "Sprinter 19 pax",
+    "24": "Minibus",
+    "37": "Bus 37 asientos",
+    "42": "Bus",
+}
+SUFIJOS_VEHICULO_NO_VALORIZADOS_TRFPO = {"V9"}
+
+# LOCATION/CATEGORIA/VEHICULO/GUIA -> rango de pax REAL de ese vehículo
+# (no el PAX_DESDE/HASTA que reportó el específico en su propia
+# tarifa, que puede ser un tramo distinto/más ancho). Copiado de
+# config/tabla_bases_vehiculo_pax.csv — embebido acá en vez de leído
+# como archivo aparte porque este script corre como celda única de
+# Colab, sin archivos hermanos disponibles. Mantener sincronizado a
+# mano con ese CSV (usado también por matching_engine.py/
+# test_matching.py, Fase 2 offline). Sólo BUE está confirmado con
+# corridas reales — FTE/USH están cargados igual que en el CSV pero
+# sin validar contra Tourplan.
+TABLA_BASES_VEHICULO_PAX = [
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 3, "pax_hasta": 5},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "SIN_GUIA", "pax_desde": 6, "pax_hasta": 11},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 12, "pax_hasta": 13},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 14, "pax_hasta": 19},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Bus 37 asientos", "guia": "CON_GUIA", "pax_desde": 20, "pax_hasta": 33},
+    {"location": "BUE", "categoria": "EXCURSION", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 34, "pax_hasta": 41},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 12, "pax_hasta": 15},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Bus 37 asientos", "guia": "CON_GUIA", "pax_desde": 16, "pax_hasta": 22},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 23, "pax_hasta": 35},
+    {"location": "BUE", "categoria": "TRASLADO", "vehiculo": "Bus + VH para equipaje", "guia": "CON_GUIA", "pax_desde": 36, "pax_hasta": 41},
+    {"location": "BUE", "categoria": "JAPON", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 1},
+    {"location": "BUE", "categoria": "JAPON", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 2, "pax_hasta": 3},
+    {"location": "BUE", "categoria": "JAPON", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 4, "pax_hasta": 5},
+    {"location": "BUE", "categoria": "JAPON", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 6, "pax_hasta": 14},
+    {"location": "BUE", "categoria": "JAPON", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 15, "pax_hasta": 38},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 1},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 1},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 2, "pax_hasta": 3},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 2, "pax_hasta": 3},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "CON_GUIA", "pax_desde": 4, "pax_hasta": 6},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "SIN_GUIA", "pax_desde": 4, "pax_hasta": 6},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 7, "pax_hasta": 9},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 7, "pax_hasta": 9},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 10, "pax_hasta": 13},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Minibus", "guia": "SIN_GUIA", "pax_desde": 10, "pax_hasta": 11},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 14, "pax_hasta": 25},
+    {"location": "BUE", "categoria": "CRUCEROS_EXCURSION", "vehiculo": "Bus + Van para equipaje", "guia": "CON_GUIA", "pax_desde": 26, "pax_hasta": 41},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 1},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 1},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 2, "pax_hasta": 3},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 2, "pax_hasta": 3},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 4, "pax_hasta": 9},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 4, "pax_hasta": 9},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 10, "pax_hasta": 13},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Minibus", "guia": "SIN_GUIA", "pax_desde": 10, "pax_hasta": 11},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 14, "pax_hasta": 25},
+    {"location": "BUE", "categoria": "CRUCEROS_TRASLADO", "vehiculo": "Bus + VH para equipaje", "guia": "CON_GUIA", "pax_desde": 26, "pax_hasta": 41},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Doble Traccion (DT)", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Doble Traccion (DT)", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 12, "pax_hasta": 13},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 12, "pax_hasta": 13},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 14, "pax_hasta": 19},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Minibus", "guia": "SIN_GUIA", "pax_desde": 14, "pax_hasta": 19},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 20, "pax_hasta": 41},
+    {"location": "FTE", "categoria": "EXCURSION", "vehiculo": "Bus", "guia": "SIN_GUIA", "pax_desde": 20, "pax_hasta": 41},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Doble Traccion (DT)", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Doble Traccion (DT)", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Sprinter 15 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 6},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Sprinter 15 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 6},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 7, "pax_hasta": 11},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 7, "pax_hasta": 11},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 12, "pax_hasta": 15},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Minibus", "guia": "SIN_GUIA", "pax_desde": 12, "pax_hasta": 15},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 16, "pax_hasta": 41},
+    {"location": "FTE", "categoria": "TRASLADO", "vehiculo": "Bus", "guia": "SIN_GUIA", "pax_desde": 16, "pax_hasta": 41},
+    {"location": "FTE", "categoria": "JAPON", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "FTE", "categoria": "JAPON", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 3},
+    {"location": "FTE", "categoria": "JAPON", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 4, "pax_hasta": 5},
+    {"location": "FTE", "categoria": "JAPON", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 6, "pax_hasta": 14},
+    {"location": "FTE", "categoria": "JAPON", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 15, "pax_hasta": 38},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Doble Traccion (DT)", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Doble Traccion (DT)", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Hi Ace/Van 12 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 8},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Hi Ace/Van 12 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 8},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Sprinter 15 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 11},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 12, "pax_hasta": 13},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 12, "pax_hasta": 13},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 14, "pax_hasta": 19},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Minibus", "guia": "SIN_GUIA", "pax_desde": 14, "pax_hasta": 19},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 20, "pax_hasta": 42},
+    {"location": "USH", "categoria": "EXCURSION", "vehiculo": "Bus", "guia": "SIN_GUIA", "pax_desde": 20, "pax_hasta": 42},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Auto", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Doble Traccion (DT)", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Doble Traccion (DT)", "guia": "SIN_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "H1/VITO", "guia": "SIN_GUIA", "pax_desde": 3, "pax_hasta": 4},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Hi Ace/Van 12 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 6},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Hi Ace/Van 12 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 6},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Sprinter 15 pax", "guia": "CON_GUIA", "pax_desde": 5, "pax_hasta": 6},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Sprinter 15 pax", "guia": "SIN_GUIA", "pax_desde": 5, "pax_hasta": 6},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 7, "pax_hasta": 11},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Sprinter 19 pax", "guia": "SIN_GUIA", "pax_desde": 7, "pax_hasta": 11},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 12, "pax_hasta": 15},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Minibus", "guia": "SIN_GUIA", "pax_desde": 12, "pax_hasta": 15},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 16, "pax_hasta": 41},
+    {"location": "USH", "categoria": "TRASLADO", "vehiculo": "Bus", "guia": "SIN_GUIA", "pax_desde": 16, "pax_hasta": 41},
+    {"location": "USH", "categoria": "JAPON", "vehiculo": "Auto", "guia": "CON_GUIA", "pax_desde": 1, "pax_hasta": 2},
+    {"location": "USH", "categoria": "JAPON", "vehiculo": "H1/VITO", "guia": "CON_GUIA", "pax_desde": 3, "pax_hasta": 3},
+    {"location": "USH", "categoria": "JAPON", "vehiculo": "Sprinter 19 pax", "guia": "CON_GUIA", "pax_desde": 4, "pax_hasta": 5},
+    {"location": "USH", "categoria": "JAPON", "vehiculo": "Minibus", "guia": "CON_GUIA", "pax_desde": 6, "pax_hasta": 14},
+    {"location": "USH", "categoria": "JAPON", "vehiculo": "Bus", "guia": "CON_GUIA", "pax_desde": 15, "pax_hasta": 38},
+]
+
+
+def _vehiculo_por_sufijo(codigo):
+    """Devuelve (vehiculo, sufijo). vehiculo es None si el sufijo no
+    está contemplado en SUFIJO_VEHICULO (código con un sufijo que
+    todavía no se mapeó), o "NO_VALORIZADO" si es un vehículo real que
+    TRFPO no valoriza como tramo propio (ver
+    SUFIJOS_VEHICULO_NO_VALORIZADOS_TRFPO)."""
+    sufijo = str(codigo or "")[-2:].upper()
+    if sufijo in SUFIJOS_VEHICULO_NO_VALORIZADOS_TRFPO:
+        return "NO_VALORIZADO", sufijo
+    return SUFIJO_VEHICULO.get(sufijo), sufijo
+
+
+# Copia reducida de matching_engine.py (detectar_flags/
+# clasificar_categoria/clasificar_guia, Fase 2) para no depender de
+# importar ese archivo como módulo aparte — este script corre como
+# celda única de Colab, sin archivos hermanos disponibles. Si se ajusta
+# la lógica de clasificación en matching_engine.py, replicar acá
+# también.
+_EXCURSION_PATTERNS_ESPECIFICO = [
+    re.compile(r'CITY', re.I),
+    re.compile(r'DINNER\s*SHOW', re.I),
+    re.compile(r'\bFD\s', re.I),
+    re.compile(r'HD\s*TIGRE', re.I),
+    re.compile(r'SOLO\s*SHOW', re.I),
+    re.compile(r'HRS?\s*DISPO', re.I),
+    re.compile(r'HR\s*ESPERA', re.I),
+    re.compile(r'MEETING\s*POINT', re.I),
+    re.compile(r'DISPO\s*GUIA', re.I),
+]
+
+
+def _clasificar_categoria_guia_especifico(codigo, descripcion):
+    """Devuelve (categoria, guia) para un código específico — misma
+    lógica que matching_engine.py::clasificar_categoria/clasificar_guia
+    (Fase 2): JAPON/CRUCERO por keyword de Description o prefijo de
+    código, EXCURSION por keyword de Description (si no matchea
+    ninguna, TRASLADO por default), SIN_GUIA por keyword o código que
+    empieza con "N". JAPON siempre usa CON_GUIA como clave de lookup
+    (tabla_bases_vehiculo_pax.csv no distingue guía para esa
+    categoría)."""
+    codigo = str(codigo or "")
+    desc = descripcion or ""
+    es_japon = codigo.upper().startswith("J") or "japon" in desc.lower()
+    es_crucero = "crucero" in desc.lower()
+    es_sin_guia = "s/guia" in desc.lower() or codigo.upper().startswith("N")
+    es_excursion = any(p.search(desc) for p in _EXCURSION_PATTERNS_ESPECIFICO)
+
+    if es_japon:
+        categoria = "JAPON"
+    elif es_crucero:
+        categoria = "CRUCEROS_EXCURSION" if es_excursion else "CRUCEROS_TRASLADO"
+    else:
+        categoria = "EXCURSION" if es_excursion else "TRASLADO"
+
+    guia = "CON_GUIA" if categoria == "JAPON" else ("SIN_GUIA" if es_sin_guia else "CON_GUIA")
+    return categoria, guia
+
+
+def _pax_esperado_vehiculo(location, categoria, vehiculo, guia):
+    """Busca en TABLA_BASES_VEHICULO_PAX el rango de pax real de un
+    vehículo para esa location/categoría/guía. Si no hay fila para esa
+    guía puntual (algunas categorías/vehículos sólo tienen CON_GUIA
+    cargado) cae a buscar sin filtrar por guía. Devuelve
+    (pax_desde, pax_hasta) o None si no encuentra ninguna fila."""
+    candidatas = [r for r in TABLA_BASES_VEHICULO_PAX
+                  if r["location"] == location and r["categoria"] == categoria
+                  and r["vehiculo"] == vehiculo and r["guia"] == guia]
+    if not candidatas:
+        candidatas = [r for r in TABLA_BASES_VEHICULO_PAX
+                      if r["location"] == location and r["categoria"] == categoria
+                      and r["vehiculo"] == vehiculo]
+    if not candidatas:
+        return None
+    r = candidatas[0]
+    return r["pax_desde"], r["pax_hasta"]
+
+
+def _pax_overlap(desde1, hasta1, desde2, hasta2):
+    """Cantidad de pax en común entre dos rangos — análogo a
+    _dias_superposicion pero para rangos de pax en vez de fechas."""
+    if desde1 is None or hasta1 is None or desde2 is None or hasta2 is None:
+        return 0
+    return max(0, min(hasta1, hasta2) - max(desde1, desde2) + 1)
+
+
 def _mejor_prefijo_generico(codigo, codigos_generico_desc):
     """Longest-prefix-match código específico → código genérico. Mismo
     algoritmo que matching_engine.py::mejor_prefijo_trfpo (Fase 2) —
@@ -1579,22 +1826,57 @@ def construir_comparacion_gap(filas):
                 "PERIODO_GENERICO_DESDE": "", "PERIODO_GENERICO_HASTA": "",
                 "TARIFA_ESPECIFICO_USD": fe["TARIFA_USD"],
             }
-            mejor, candidatos = _mejor_prefijo_generico(fe["PRODUCT_CODE"], codigos_generico)
             flags = []
+
+            mejor, candidatos = _mejor_prefijo_generico(fe["PRODUCT_CODE"], codigos_generico)
             if len(candidatos) > 1:
                 flags.append("COLISION_REVISAR")
+
+            vehiculo, sufijo = _vehiculo_por_sufijo(fe["PRODUCT_CODE"])
+            if vehiculo == "NO_VALORIZADO":
+                # Vehículo real (ej. V9/Van 9 pax) que TRFPO no valoriza
+                # como tramo propio — no hay ningún tramo de TRFPO
+                # contra el cual comparar, así que se excluye en vez de
+                # forzar un match contra un tramo que no le corresponde
+                # (ver DISENO.md).
+                flags.append(f"VEHICULO_{sufijo}_NO_VALORIZADO_TRFPO")
+                salida.append({**base, "CODIGO_GENERICO": mejor or "", "TARIFA_GENERICO_USD": None,
+                               "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
+                               "FLAGS": ",".join(flags)})
+                continue
+
             if mejor is None:
                 salida.append({**base, "CODIGO_GENERICO": "", "TARIFA_GENERICO_USD": None,
                                "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
                                "FLAGS": ",".join(flags + ["SIN_MATCH_GENERICO"])})
                 continue
 
+            # Rango de pax a usar para elegir el tramo correcto de
+            # TRFPO: el "real" del vehículo según
+            # TABLA_BASES_VEHICULO_PAX (por sufijo de código +
+            # categoría/guía clasificadas de la Description), no el
+            # PAX_DESDE/HASTA que reportó el específico en su propia
+            # tarifa — puede ser un tramo más ancho o distinto del que
+            # realmente le corresponde a ese vehículo (bug real
+            # encontrado por la usuaria, ver DISENO.md).
+            pax_desde_cmp, pax_hasta_cmp = fe["PAX_DESDE"], fe["PAX_HASTA"]
+            if vehiculo is None:
+                flags.append(f"SUFIJO_VEHICULO_DESCONOCIDO_{sufijo}")
+            else:
+                categoria, guia = _clasificar_categoria_guia_especifico(
+                    fe["PRODUCT_CODE"], fe.get("DESCRIPCION", ""))
+                esperado = _pax_esperado_vehiculo(location, categoria, vehiculo, guia)
+                if esperado is None:
+                    flags.append(f"SIN_BASE_VEHICULO_PAX_{categoria}_{vehiculo}".replace(" ", "_"))
+                else:
+                    pax_desde_cmp, pax_hasta_cmp = esperado
+
             candidatas = [
                 f for f in filas_generico
                 if f["PRODUCT_CODE"] == mejor
                 and f["PAX_DESDE"] is not None and f["PAX_HASTA"] is not None
-                and fe["PAX_DESDE"] is not None and fe["PAX_HASTA"] is not None
-                and f["PAX_DESDE"] <= fe["PAX_HASTA"] and f["PAX_HASTA"] >= fe["PAX_DESDE"]
+                and pax_desde_cmp is not None and pax_hasta_cmp is not None
+                and f["PAX_DESDE"] <= pax_hasta_cmp and f["PAX_HASTA"] >= pax_desde_cmp
             ]
             if not candidatas:
                 salida.append({**base, "CODIGO_GENERICO": mejor, "TARIFA_GENERICO_USD": None,
@@ -1602,14 +1884,16 @@ def construir_comparacion_gap(filas):
                                "FLAGS": ",".join(flags + ["SIN_GENERICO_PARA_ESE_PAX"])})
                 continue
 
-            # Más de un período del genérico cargado para este mismo
-            # rango de pax (ej. cambió su tarifa a mitad del período
-            # del específico): se usa el de MAYOR superposición de
-            # fechas con el período del específico, y se marca con
+            # Más de un tramo de TRFPO candidato (ej. dos períodos
+            # solapados, o el rango de pax esperado del vehículo cae a
+            # caballo entre dos tramos de TRFPO): se elige primero por
+            # MAYOR superposición de pax con el rango esperado del
+            # vehículo, y ante empate por MAYOR superposición de fechas
+            # con el período del específico. Se marca con
             # MULTIPLES_PERIODOS_GENERICO para no descartar el resto en
             # silencio — el/la que revise sabe que hay otro(s)
-            # período(s) del genérico en tarifas_vigentes.xlsx para ese
-            # mismo código/pax.
+            # tramo(s)/período(s) del genérico en tarifas_vigentes.xlsx
+            # para ese mismo código.
             if len(candidatas) > 1:
                 flags.append("MULTIPLES_PERIODOS_GENERICO")
 
@@ -1618,7 +1902,10 @@ def construir_comparacion_gap(filas):
                     parsear_fecha(fe["PERIODO_DESDE"]), parsear_fecha(fe["PERIODO_HASTA"]),
                     parsear_fecha(f["PERIODO_DESDE"]), parsear_fecha(f["PERIODO_HASTA"]))
 
-            fila_generico = max(candidatas, key=_dias)
+            def _pax_ov(f):
+                return _pax_overlap(pax_desde_cmp, pax_hasta_cmp, f["PAX_DESDE"], f["PAX_HASTA"])
+
+            fila_generico = max(candidatas, key=lambda f: (_pax_ov(f), _dias(f)))
             if _dias(fila_generico) == 0:
                 flags.append("SIN_SUPERPOSICION_DE_PERIODO")
 
@@ -1695,6 +1982,7 @@ def main():
                         "PRODUCT_CODE": item["codigo"],
                         "ES_GENERICO": item["es_generico"],
                         "GENERICO": item["generico"],
+                        "DESCRIPCION": item.get("descripcion", ""),
                         "PERIODO_DESDE": t.get("periodo_desde", ""),
                         "PERIODO_HASTA": t.get("periodo_hasta", ""),
                         "PRICE_CODE": t.get("price_code", ""),
