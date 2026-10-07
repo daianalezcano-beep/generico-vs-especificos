@@ -1,0 +1,39 @@
+LOCATION,SUPPLIER,SUPPLIER_NAME,SERVICE_TYPE
+BUE,GUIAPR,Guia por Asignar Ruso,GU
+BUE,GUIAPJ,Japonés - Guia por Asignar,GU
+BUE,GUIAPO,Guia por Asignar,GU
+BUE,PEAPO,Peajes por Asignar,PJ
+BUE,TRFPO,Transporte Por Asignar,TR
+CAC,BOXLPO,Box Lunch Por Asignar,
+CAC,GUIAPO,Guia por Asignar,GU
+CAC,TRFPO,Transporte Por Asignar,TR
+CAF,GUIAPO,Guia por Asignar,GU
+CAF,BODEPO,Bodega Por Asignar,
+CAF,TRFPO,Transporte Por Asignar,TR
+CHA,GUIAPO,Guia por Asignar,GU
+CHA,TRFPO,Transporte Por Asignar,TR
+FTE,GUIAPO,Guia por Asignar,GU
+FTE,NAVPO,Navegación Por Asignar,
+FTE,PARPO,Parking Por Asignar,
+FTE,TRFPO,Transporte Por Asignar,TR
+HUM,GUIAPO,Guia por Asignar,GU
+HUM,TRFPO,Transporte Por Asignar,TR
+JUJ,GUIAPO,Guia por Asignar,GU
+JUJ,TRFPO,Transporte Por Asignar,TR
+PUR,GUIAPO,Guia por Asignar,GU
+PUR,TRFPO,Transporte Por Asignar,TR
+SLA,BOXLPO,Box Lunch Por Asignar,
+SLA,GUIAPO,Guia por Asignar,GU
+SLA,TRFPO,Transporte Por Asignar,TR
+TIL,GUIAPO,Guia por Asignar,GU
+TIL,TRFPO,Transporte Por Asignar,TR
+TUC,GUIAPO,Guia por Asignar,GU
+TUC,TRFPO,Transporte Por Asignar,TR
+USH,GUIAPO,Guia por Asignar,GU
+USH,BOXLPO,Box Lunch Por Asignar,
+USH,NAVPO,Navegación Por Asignar,
+USH,PARPO,Parking Por Asignar,
+USH,TIPPO,Tip Por Asignar,
+USH,TRFPO,Transporte Por Asignar,TR
+RTU,GUIAPO,Guia por Asignar,GU
+RTU,TRFPO,Transporte Por Asignar,TR
