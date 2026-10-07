@@ -1937,6 +1937,23 @@ def reemplazar_filas_codigo(sh, ws, columnas, destino, sup, loc, codigo, nuevas)
 
 
 # ── Cola de trabajo según el modo ────────────────────────────────────
+def service_type_de(generico):
+    """Service type del genérico según config/genericos.csv (el mismo
+    catálogo que usa la app); "" si no está definido. Se usa para que los
+    específicos se busquen SÓLO dentro del servicio del genérico (ej. TR
+    para TRFPO) y no traigan códigos de otros servicios (ej. peajes PJ)."""
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "genericos.csv")
+    try:
+        import csv
+        with open(ruta, encoding="utf-8", newline="") as f:
+            for r in csv.DictReader(f):
+                if r["SUPPLIER"].strip() == generico and r.get("SERVICE_TYPE", "").strip():
+                    return r["SERVICE_TYPE"].strip()
+    except OSError:
+        pass
+    return ""
+
+
 def armar_plan(modo, esp_registrados, gen_archivados):
     """Devuelve [(comparaciones, incluir_generico, incluir_especificos), ...]
     — cada tramo en el formato que espera descubrir_cola."""
@@ -1949,7 +1966,8 @@ def armar_plan(modo, esp_registrados, gen_archivados):
     if modo == "ESPECIFICO":
         # El genérico elegido (servicio) define contra cuál se compara: queda
         # asociado a las filas del específico y la comparación sólo mira ese.
-        return [([{"location": loc, "service_type": "", "generico": GENERICO,
+        return [([{"location": loc, "service_type": SERVICE_TYPE_GENERICO or service_type_de(GENERICO),
+                   "generico": GENERICO,
                    "especificos": ESPECIFICOS, "price_code": PRICE_CODE_DEFAULT}
                   for loc in LOCATIONS], False, True)]
 
@@ -1968,10 +1986,10 @@ def armar_plan(modo, esp_registrados, gen_archivados):
     grupos = {}
     for (sup, loc), gen in pares_esp.items():
         grupos.setdefault((loc, gen), set()).add(sup)
-    comps_esp = [{"location": loc, "service_type": "", "generico": gen,
+    comps_esp = [{"location": loc, "service_type": service_type_de(gen), "generico": gen,
                   "especificos": sorted(sups), "price_code": PRICE_CODE_DEFAULT}
                  for (loc, gen), sups in sorted(grupos.items())]
-    comps_gen = [{"location": loc, "service_type": "", "generico": sup,
+    comps_gen = [{"location": loc, "service_type": service_type_de(sup), "generico": sup,
                   "especificos": [], "price_code": PRICE_CODE_DEFAULT}
                  for sup, loc in sorted(pares_gen)]
     plan = []

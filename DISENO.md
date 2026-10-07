@@ -878,6 +878,15 @@ Decisiones de implementación:
   disponibles y contra qué genérico se compara — las filas del específico quedan
   asociadas a él). "Actualizar variación" pide primero el servicio y lee los
   proveedores registrados de ese Sheet.
+- **Filtro por servicio al buscar los específicos**: la búsqueda en Product
+  Search de cada específico se acota al Service Type del genérico elegido (TR
+  para TRFPO, PJ para PEAPO, GU para guías; sale de `config/genericos.csv`).
+  Sin eso, un proveedor traía TODOS sus códigos (transporte + peajes + otros)
+  y los que no son del servicio quedaban en la comparación como
+  `SIN_MATCH_GENERICO`. Si el genérico no tiene service type definido (ej.
+  BOXLPO) se busca sólo por location y supplier. Al releer un proveedor, los
+  códigos archivados que ya no aparecen (por ejemplo los de otro servicio de
+  corridas anteriores) se borran al terminar de leerlo completo.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la
