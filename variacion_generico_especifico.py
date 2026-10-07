@@ -23,8 +23,8 @@
 #                  locations con los específicos ya archivados.
 #     ESPECIFICO → extrae los proveedores de TOURPLAN_ESPECIFICOS
 #                  (código o nombre, separados por coma) en cada
-#                  location y los compara contra los genéricos
-#                  archivados de esas locations.
+#                  location y los compara contra el genérico elegido
+#                  (TOURPLAN_GENERICO), ya archivado.
 #     COMPLETO   → GENERICO + ESPECIFICO en la misma corrida.
 #     ACTUALIZAR → re-extrae todos los específicos ya registrados en la
 #                  pestaña ESPECIFICOS y recalcula la comparación.
@@ -1942,9 +1942,9 @@ def armar_plan(modo, esp_registrados, gen_archivados):
                    "price_code": PRICE_CODE_DEFAULT} for loc in LOCATIONS],
                  True, modo == "COMPLETO")]
     if modo == "ESPECIFICO":
-        # Sin genérico elegido: la comparación busca por prefijo de código
-        # entre todos los genéricos archivados de la location.
-        return [([{"location": loc, "service_type": "", "generico": "",
+        # El genérico elegido (servicio) define contra cuál se compara: queda
+        # asociado a las filas del específico y la comparación sólo mira ese.
+        return [([{"location": loc, "service_type": "", "generico": GENERICO,
                    "especificos": ESPECIFICOS, "price_code": PRICE_CODE_DEFAULT}
                   for loc in LOCATIONS], False, True)]
 
@@ -1987,6 +1987,8 @@ def validar_config(modo):
         raise ValueError("Elegí al menos una location (TOURPLAN_LOCATIONS).")
     if modo in ("GENERICO", "COMPLETO") and not GENERICO:
         raise ValueError("Falta el supplier genérico (TOURPLAN_GENERICO).")
+    if modo == "ESPECIFICO" and not GENERICO:
+        raise ValueError("Falta el genérico contra el que comparar (TOURPLAN_GENERICO).")
     if modo in ("ESPECIFICO", "COMPLETO") and not ESPECIFICOS:
         raise ValueError("Falta al menos un proveedor específico (TOURPLAN_ESPECIFICOS).")
 

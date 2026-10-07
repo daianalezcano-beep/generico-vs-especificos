@@ -92,10 +92,27 @@ def _leer_proceso(proc, state):
     state["finished"] = True
 
 
+# Genéricos con su propio Sheet de salida, a la vista en Configuración (el
+# resto del catálogo va en un desplegable). Cada Sheet agrupa un servicio:
+# sus pestañas GENERICOS / ESPECIFICOS / COMPARACION son sólo de ese genérico.
+GENERICOS_PRINCIPALES = ["TRFPO", "GUIAPO", "PEAPO"]
+
+
+def sheet_url_de(generico):
+    """URL del Sheet de salida para `generico`: la propia de ese genérico
+    (⚙️ Configuración) o, si no tiene, la URL general como respaldo."""
+    cfg = user_config.cargar()
+    propia = (cfg.get("sheet_urls_generico", {}).get(generico or "", "") or "").strip()
+    return propia or (cfg.get("sheet_urls", {}).get(SCRIPT_KEY, "") or "").strip()
+
+
 def render_configuracion():
     st.header("Configuración")
     st.caption("Se guarda en esta computadora (no se sube al repositorio).")
     cfg = user_config.cargar()
+    catalogo = cargar_catalogo()
+    otros = [g for g in sorted(catalogo) if g not in GENERICOS_PRINCIPALES]
+    urls_gen = cfg.get("sheet_urls_generico", {})
     with st.form("form_config"):
         tp_usuario = st.text_input("Usuario Tourplan", value=cfg.get("tp_usuario", ""))
         tp_password = st.text_input("Password Tourplan", value=cfg.get("tp_password", ""), type="password")
@@ -103,11 +120,25 @@ def render_configuracion():
             "URL de Tourplan", value=cfg.get("tp_base_url", PRODUCCION_URL),
             help="Producción por default. Para probar contra Test, cambiala acá "
                  "(ej. https://tourplannx.eurotur.com.ar/TourplanNX_Test).")
+
+        st.markdown("**Google Sheet de salida por genérico**")
+        st.caption("Un Sheet por servicio para mantener los comparativos ordenados: en cada uno se "
+                   "guardan las pestañas GENERICOS, ESPECIFICOS y COMPARACION de ese genérico.")
+        nuevas_urls = {}
+        for g in GENERICOS_PRINCIPALES:
+            nuevas_urls[g] = st.text_input(
+                f"{g} — {catalogo[g]['nombre'] if g in catalogo else ''}", value=urls_gen.get(g, ""),
+                key=f"cfg_url_{g}")
+        with st.expander("Otros genéricos"):
+            for g in otros:
+                nuevas_urls[g] = st.text_input(
+                    f"{g} — {catalogo[g]['nombre']}", value=urls_gen.get(g, ""), key=f"cfg_url_{g}")
         sheet_url = st.text_input(
-            "URL del Google Sheet de salida",
+            "URL general (opcional)",
             value=cfg.get("sheet_urls", {}).get(SCRIPT_KEY, ""),
-            help="Ahí se guardan las pestañas GENERICOS, ESPECIFICOS y COMPARACION.",
+            help="Se usa para los genéricos que no tengan su propio Sheet arriba.",
         )
+
         headless = st.checkbox("Correr Chrome sin ventana (headless)", value=bool(cfg.get("headless", False)))
         credenciales = st.file_uploader(
             "Credenciales de Google (credentials.json, OAuth de escritorio)", type="json",
@@ -125,6 +156,7 @@ def render_configuracion():
             urls[SCRIPT_KEY] = sheet_url.strip()
             cfg.update({"tp_usuario": tp_usuario.strip(), "tp_password": tp_password,
                         "sheet_urls": urls, "headless": headless,
+                        "sheet_urls_generico": {g: u.strip() for g, u in nuevas_urls.items() if u.strip()},
                         "tp_base_url": tp_base_url.strip() or PRODUCCION_URL})
             user_config.guardar(cfg)
             st.success("Configuración guardada.")
@@ -164,14 +196,12 @@ def _lanzar(state, env_extra):
 
 def render_principal():
     catalogo = cargar_catalogo()
-    todas_locations = sorted({l for e in catalogo.values() for l in e["locations"]})
 
     state = st.session_state.setdefault("_state_gve", {
         "running": False, "finished": False, "log_lines": [], "returncode": None,
         "abort_requested": False})
 
     usuario, password = user_config.tp_credenciales_default()
-    sheet_url = user_config.sheet_url_default(SCRIPT_KEY)
     # La URL de Tourplan se carga una sola vez en ⚙️ Configuración.
     base_url = user_config.cargar().get("tp_base_url", PRODUCCION_URL)
     st.caption(f"Tourplan: {base_url} (se cambia en ⚙️ Configuración)")
@@ -182,35 +212,33 @@ def render_principal():
     modo = dict(MODOS)[modo_label]
 
     st.subheader("2. Proveedor y locations")
-    generico, locations_gen, especificos, locations_esp = "", [], "", []
-
-    if modo in ("GENERICO", "COMPLETO"):
-        generico = st.selectbox(
-            "Supplier genérico", sorted(catalogo), index=None,
-            placeholder="Elegí un supplier genérico",
-            format_func=lambda s: f"{s} — {catalogo[s]['nombre']}",
-            disabled=state["running"]) or ""
-        if generico:
-            disponibles = catalogo[generico]["locations"]
-            # key por supplier: al cambiar de genérico se resetea la selección
-            # (cada uno habilita solo las locations donde está cargado).
-            locations_gen = st.multiselect(
-                f"Locations de {generico} (buscá o elegí las que necesites)", disponibles, default=[],
-                key=f"loc_gen_{generico}", disabled=state["running"])
-            if not catalogo[generico]["service_type"]:
-                st.caption(f"⚠️ {generico} no tiene Service Type definido en config/genericos.csv todavía.")
-        else:
-            st.caption("Elegí el supplier genérico para ver sus locations.")
+    # El genérico (servicio) se elige en todos los modos: define el Sheet de
+    # salida, las locations disponibles y contra qué genérico se compara.
+    generico, locations_gen, especificos = "", [], ""
+    generico = st.selectbox(
+        "Supplier genérico" if modo != "ESPECIFICO" else "Genérico contra el que se compara (servicio)",
+        sorted(catalogo), index=None, placeholder="Elegí un supplier genérico",
+        format_func=lambda s: f"{s} — {catalogo[s]['nombre']}",
+        disabled=state["running"]) or ""
+    if generico:
+        disponibles = catalogo[generico]["locations"]
+        # key por supplier: al cambiar de genérico se resetea la selección
+        # (cada uno habilita solo las locations donde está cargado).
+        locations_gen = st.multiselect(
+            f"Locations de {generico} (buscá o elegí las que necesites)", disponibles, default=[],
+            key=f"loc_gen_{generico}", disabled=state["running"])
+        if not catalogo[generico]["service_type"]:
+            st.caption(f"⚠️ {generico} no tiene Service Type definido en config/genericos.csv todavía.")
+    else:
+        st.caption("Elegí el supplier genérico para ver sus locations.")
+    sheet_url = sheet_url_de(generico) if generico else ""
+    if generico and not sheet_url:
+        st.warning(f"No hay un Google Sheet configurado para {generico} — cargalo en ⚙️ Configuración.")
 
     if modo in ("ESPECIFICO", "COMPLETO"):
         especificos = st.text_input(
             "Proveedor(es) específico(s) — código o nombre, separados por coma",
             placeholder="ej. 6HOUS1, 1TEP01", disabled=state["running"])
-        if modo == "ESPECIFICO":
-            locations_esp = st.multiselect(
-                "Locations donde buscarlos", todas_locations, disabled=state["running"])
-        else:
-            locations_esp = locations_gen  # en Completo comparte las del genérico
 
     st.subheader("3. Rango de fechas a comparar")
     limitar = st.checkbox("Limitar a un rango (si no, solo el período vigente hoy)",
@@ -234,7 +262,7 @@ def render_principal():
     if modo == "GENERICO":
         completo = bool(generico and locations_gen)
     elif modo == "ESPECIFICO":
-        completo = bool(especificos.strip() and locations_esp)
+        completo = bool(generico and especificos.strip() and locations_gen)
     else:
         completo = bool(generico and locations_gen and especificos.strip())
     if limitar and desde and hasta and desde > hasta:
@@ -245,7 +273,7 @@ def render_principal():
         st.info("variacion_generico_especifico.py todavía no está en el repo — la interfaz "
                 "ya funciona pero no se puede ejecutar hasta que el script se sume.")
     if not base_ok:
-        st.caption("Completá usuario/password y URL del Sheet en ⚙️ Configuración para poder ejecutar.")
+        st.caption("Completá usuario/password en ⚙️ Configuración y elegí un genérico con Sheet configurado para poder ejecutar.")
 
     puede = completo and base_ok and SCRIPT_PATH.exists() and not state["running"]
     c_run, c_abort = st.columns(2)
@@ -256,22 +284,33 @@ def render_principal():
     st.subheader("Actualizar variación")
     st.caption("Usalo justo después de modificar valores en Tourplan: indicá qué proveedor cambió y "
                "se vuelven a leer sólo esos (no todo lo anterior); la comparación se recalcula al terminar.")
+    servicio_upd = st.selectbox(
+        "Servicio (Sheet) a actualizar", sorted(catalogo), index=None,
+        placeholder="Elegí el genérico del servicio",
+        format_func=lambda s: f"{s} — {catalogo[s]['nombre']}",
+        disabled=state["running"], key="servicio_upd") or ""
+    sheet_upd = sheet_url_de(servicio_upd) if servicio_upd else ""
+    if servicio_upd and not sheet_upd:
+        st.warning(f"No hay un Google Sheet configurado para {servicio_upd} — cargalo en ⚙️ Configuración.")
     if st.button("↻ Leer proveedores registrados del Sheet",
-                 disabled=not sheet_url or state["running"]):
+                 disabled=not sheet_upd or state["running"]):
         try:
-            st.session_state["registrados"] = leer_registrados(sheet_url)
+            st.session_state["registrados"] = leer_registrados(sheet_upd)
+            st.session_state["registrados_de"] = servicio_upd
         except Exception as e:
             st.error(f"No pude leer el Sheet: {e}")
-    registrados = st.session_state.get("registrados", [])
-    if "registrados" in st.session_state and not registrados:
-        st.info("Todavía no hay nada archivado en el Sheet — corré antes un modo genérico/específico/completo.")
+    registrados = (st.session_state.get("registrados", [])
+                   if st.session_state.get("registrados_de") == servicio_upd else [])
+    if st.session_state.get("registrados_de") == servicio_upd and "registrados" in st.session_state \
+            and not registrados:
+        st.info("Todavía no hay nada archivado en ese Sheet — corré antes un modo genérico/específico/completo.")
     cambiados = st.multiselect(
         "Proveedores que cambiaron", registrados, disabled=state["running"] or not registrados,
         format_func=lambda r: f"{r[0]} — {r[1]} ({r[2]})")
     todos_esp = st.checkbox("Actualizar todos los específicos registrados (más lento)",
                             disabled=state["running"] or not registrados)
     upd_clicked = st.button(
-        "🔄 Actualizar variación", disabled=not (base_ok and SCRIPT_PATH.exists())
+        "🔄 Actualizar variación", disabled=not (usuario and password and sheet_upd and SCRIPT_PATH.exists())
         or state["running"] or not (cambiados or todos_esp))
 
     def _fmt(d):
@@ -279,7 +318,6 @@ def render_principal():
 
     env_comun = {
         "TOURPLAN_BASE_URL": base_url,
-        "TOURPLAN_SHEET_URL": sheet_url,
         "TOURPLAN_FECHA_DESDE": _fmt(desde),
         "TOURPLAN_FECHA_HASTA": _fmt(hasta),
         "TOURPLAN_PRICE_CODE": price_code.strip(),
@@ -288,15 +326,16 @@ def render_principal():
     if run_clicked:
         _lanzar(state, {
             **env_comun,
+            "TOURPLAN_SHEET_URL": sheet_url,
             "TOURPLAN_MODO": modo,
             "TOURPLAN_GENERICO": generico,
             "TOURPLAN_GENERICO_SERVICE_TYPE": catalogo[generico]["service_type"] if generico else "",
-            "TOURPLAN_LOCATIONS": ",".join(locations_gen if modo != "ESPECIFICO" else locations_esp),
+            "TOURPLAN_LOCATIONS": ",".join(locations_gen),
             "TOURPLAN_ESPECIFICOS": especificos.strip(),
         })
     if upd_clicked:
         _lanzar(state, {
-            **env_comun, "TOURPLAN_MODO": "ACTUALIZAR",
+            **env_comun, "TOURPLAN_SHEET_URL": sheet_upd, "TOURPLAN_MODO": "ACTUALIZAR",
             "TOURPLAN_ACTUALIZAR": "" if todos_esp else ",".join(f"{r[0]}@{r[1]}" for r in cambiados),
         })
 

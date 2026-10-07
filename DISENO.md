@@ -891,6 +891,15 @@ Decisiones de implementación:
   propio específico, sin pasar por la tabla de vehículos y sin la bandera
   `SUFIJO_VEHICULO_DESCONOCIDO_*` (confirmado por la usuaria con PEAPO en BUE).
   Cambio sólo en la copia de `construir_comparacion_gap` de este script.
+- **Un Google Sheet por genérico (servicio)**: en ⚙️ Configuración se carga la
+  URL de salida de cada genérico (TRFPO, GUIAPO, PEAPO a la vista; el resto del
+  catálogo en un desplegable) más una URL general de respaldo. Cada Sheet guarda
+  las pestañas GENERICOS / ESPECIFICOS / COMPARACION sólo de ese genérico, así
+  los comparativos quedan agrupados por servicio. El genérico se elige en todos
+  los modos (también en "Solo específico": define el Sheet, las locations
+  disponibles y contra qué genérico se compara — las filas del específico quedan
+  asociadas a él). "Actualizar variación" pide primero el servicio y lee los
+  proveedores registrados de ese Sheet.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la
