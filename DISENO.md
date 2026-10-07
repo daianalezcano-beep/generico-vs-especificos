@@ -873,8 +873,8 @@ Decisiones de implementación:
 - **Guardado constante**: las tarifas de cada código se escriben en el
   Sheet apenas se leen (se borran las filas archivadas de ese código y se
   agregan las nuevas, 1–2 llamadas a la API, sin releer el Sheet). La
-  comparación —derivada— se recalcula cada 10 códigos, al terminar cada
-  supplier y al final (también si se aborta o hay un error). Los códigos
+  comparación se calcula una sola vez, al final, cuando ya se exportaron
+  todos los códigos (también si se aborta o hay un error, con lo ya guardado). Los códigos
   archivados que ya no existen en Tourplan sólo se borran si el supplier se
   leyó completo y sin fallas (no con `TOURPLAN_LIMIT_PRUEBA` ni si falló
   algún código).

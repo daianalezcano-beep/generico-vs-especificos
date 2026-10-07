@@ -36,9 +36,9 @@
 #     COMPARACION  gap genérico vs específico (una fila por código/pax/período)
 #
 #   GUARDADO CONSTANTE: las tarifas de cada código se escriben en el Sheet
-#   apenas se leen (reemplazando sus filas archivadas); la comparación se
-#   recalcula cada FLUSH_CADA códigos, al terminar cada supplier y al
-#   final (también si se aborta o hay un error); los códigos archivados que
+#   apenas se leen (reemplazando sus filas archivadas). La COMPARACIÓN se
+#   calcula una sola vez, al final, cuando ya se exportaron todos los
+#   códigos (también si se aborta o hay un error, con lo ya guardado); los códigos archivados que
 #   ya no existen en Tourplan sólo se borran cuando el supplier se leyó
 #   completo y sin fallas (no con TOURPLAN_LIMIT_PRUEBA ni si falló algún
 #   código), para no degradar un archivo bueno con uno incompleto.
@@ -2163,13 +2163,6 @@ def abrir_producto(driver, item, es_primero_de_grupo, grupo_multiple, estado_ok)
                     service_type=item["service_type"])
 
 
-# Cada cuántos códigos se recalcula la comparación (además de al terminar
-# cada supplier y al final). Las tarifas de cada código se guardan en el
-# Sheet apenas se leen, así un corte (abortar, caída de Chrome/red) no
-# pierde nada.
-FLUSH_CADA = 10
-
-
 def main():
     modo = MODO
     validar_config(modo)
@@ -2199,11 +2192,8 @@ def main():
         return
 
     # ── Guardado: cada código se escribe en el Sheet apenas se lee; la
-    # comparación (derivada) se recalcula cada FLUSH_CADA códigos, al
-    # terminar cada supplier y al final. ──
-    locs_pend = set()
+    # comparación se calcula UNA vez, al final, con todo ya exportado. ──
     ahora_locs = set(LOCATIONS)
-    n_sin_comparar = 0
 
     def limpiar_grupo(sup, loc, es_gen, vigentes):
         """Supplier leído completo y sin fallas: borra de lo archivado los
@@ -2219,7 +2209,7 @@ def main():
             print(f"🧹 {ws.title}: {len(obsoletos)} filas de códigos que ya no existen en Tourplan")
 
     def actualizar_comparacion(locs):
-        nonlocal cmp_rows, locs_pend, n_sin_comparar
+        nonlocal cmp_rows
         locs = set(locs)
         if not locs:
             return
@@ -2230,7 +2220,6 @@ def main():
         cmp_rows = [f for f in cmp_rows if str(f.get("LOCATION", "")) not in locs] + comp
         reescribir_hoja(ws_cmp, COLS_COMPARACION, cmp_rows, formato_pct_col="DIFERENCIA_PCT")
         print(f"✅ {HOJA_COMPARACION}: {len(comp)} filas recalculadas ({', '.join(sorted(locs))})")
-        locs_pend, n_sin_comparar = set(), 0
 
     driver = crear_driver()
     cola, abortado, fallo_fatal = [], False, False
@@ -2306,8 +2295,6 @@ def main():
                 reemplazar_filas_codigo(sh, ws_dest, COLS_TARIFAS, destino, g[0], g[1],
                                         item["codigo"], filas_codigo)
                 print(f"    💾 {ws_dest.title}: {len(filas_codigo)} filas de {item['codigo']} guardadas")
-                locs_pend.add(item["location"])
-                n_sin_comparar += 1
                 procesados_ok += 1
             except AbortadoPorUsuario:
                 raise
@@ -2326,14 +2313,10 @@ def main():
             try:
                 if restantes[g] == 0 and g not in grupos_fallidos:
                     limpiar_grupo(g[0], g[1], es_gen_grupo[g], vigentes_por_grupo[g])
-                    actualizar_comparacion(locs_pend)
                 elif restantes[g] == 0:
                     print(f"⚠ {g[0]}/{g[1]}: lectura incompleta — sólo se pisaron los códigos leídos OK.")
-                    actualizar_comparacion(locs_pend)
-                elif n_sin_comparar >= FLUSH_CADA:
-                    actualizar_comparacion(locs_pend)
             except Exception as e:
-                print(f"    ⚠ No pude actualizar el Sheet (se reintenta más adelante): {e}")
+                print(f"    ⚠ No pude limpiar el Sheet de {g[0]}/{g[1]}: {e}")
     except AbortadoPorUsuario:
         abortado = True
         print("\n⏸️ Abortado por el usuario — se guarda lo ya leído.")
