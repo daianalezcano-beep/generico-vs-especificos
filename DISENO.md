@@ -879,6 +879,12 @@ Decisiones de implementación:
   archivados que ya no existen en Tourplan sólo se borran si el supplier se
   leyó completo y sin fallas (no con `TOURPLAN_LIMIT_PRUEBA` ni si falló
   algún código).
+- **Cierre del detalle del período antes de la lupa**: tras leer las tarifas
+  de un código, el detalle del período queda abierto como `tp-dialog`; se
+  cierra con el botón EXIT (`_cerrar_ultimo_tp_dialog`, mismo helper que
+  Drive-TP-NX-App) y recién después se usa la lupa. Además el popover de la
+  lupa se busca en el último diálogo VISIBLE (Angular deja en el DOM los
+  diálogos ya cerrados, así que no se puede asumir un índice fijo).
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la

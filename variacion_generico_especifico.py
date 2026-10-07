@@ -1995,6 +1995,58 @@ def validar_config(modo):
 # Ante cualquier duda se cae a buscar_producto() (camino lento pero
 # validado), nunca queda en un estado ambiguo.
 
+def _cerrar_ultimo_tp_dialog(driver, max_espera=4):
+    """Clickea EXIT/CANCEL/CLOSE en el ÚLTIMO <tp-dialog> visible y espera
+    a que se cierre. Angular nunca saca del DOM un tp-dialog ya cerrado
+    (sólo deja de mostrarlo), así que el diálogo activo es siempre el
+    último. Mismo helper que Drive-TP-NX-App (valorizacion_desde_madre).
+    Devuelve True si se cerró, False si seguía abierto."""
+    try:
+        driver.execute_script("""
+            function vis(e){ return !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length); }
+            var dlgs = document.querySelectorAll('tp-dialog');
+            var dlg = dlgs.length ? dlgs[dlgs.length - 1] : document;
+            var b = dlg.querySelector(
+                'button.tpcancel, tp-button.cancel > button, tp-button.close > button, tp-button.exit > button');
+            if (b && vis(b)) { b.click(); return; }
+            var btns = Array.from(dlg.querySelectorAll('button')).filter(vis);
+            for (var btn of btns) {
+                var t = (btn.innerText || '').trim().toUpperCase();
+                if (t === 'EXIT' || t === 'CANCEL' || t === 'CLOSE') { btn.click(); return; }
+            }
+        """)
+        time.sleep(1)
+    except Exception:
+        pass
+    for _ in range(max_espera):
+        if not _hay_dialogo_visible(driver):
+            return True
+        time.sleep(1)
+    return False
+
+
+def _hay_dialogo_visible(driver):
+    return bool(driver.execute_script("""
+        var dlgs = document.querySelectorAll('tp-dialog');
+        var dlg = dlgs.length ? dlgs[dlgs.length - 1] : null;
+        return !!(dlg && dlg.offsetParent);
+    """))
+
+
+def cerrar_dialogos_abiertos(driver, max_dialogos=4):
+    """Cierra con EXIT todo diálogo que haya quedado abierto (típicamente
+    el detalle del período de RATES que se acaba de leer) para dejar la
+    pantalla del producto libre antes de usar la lupa. Devuelve True si
+    no quedó ninguno abierto."""
+    for _ in range(max_dialogos):
+        if not _hay_dialogo_visible(driver):
+            return True
+        if not _cerrar_ultimo_tp_dialog(driver):
+            print("    ⚠ Un diálogo no se cerró con EXIT")
+            return False
+    return not _hay_dialogo_visible(driver)
+
+
 def _en_contexto_producto(driver):
     """True si el driver quedó parado en un producto (menú con RATES)."""
     try:
@@ -2032,7 +2084,8 @@ def _saltar_a_producto_via_lupa(driver, codigo):
             var cod = arguments[0];
             var dialogs = document.querySelectorAll('tp-dialog');
             if (!dialogs.length) return null;
-            var dlg = dialogs.length > 1 ? dialogs[1] : dialogs[0];
+            var vis = Array.from(dialogs).filter(function(d){ return d.offsetParent; });
+            var dlg = vis.length ? vis[vis.length - 1] : (dialogs.length > 1 ? dialogs[1] : dialogs[0]);
             var rows = Array.from(dlg.querySelectorAll('tr')).slice(1);
             for (var tr of rows){
                 var celda = tr.querySelector('td.tpcol-optioncode');
@@ -2048,7 +2101,8 @@ def _saltar_a_producto_via_lupa(driver, codigo):
         return bool(driver.execute_script("""
             var dialogs = document.querySelectorAll('tp-dialog');
             if (!dialogs.length) return false;
-            var dlg = dialogs.length > 1 ? dialogs[1] : dialogs[0];
+            var vis = Array.from(dialogs).filter(function(d){ return d.offsetParent; });
+            var dlg = vis.length ? vis[vis.length - 1] : (dialogs.length > 1 ? dialogs[1] : dialogs[0]);
             var fila = dlg.querySelector('tr');
             if (!fila) return false;
             var cur = fila.closest('table');
@@ -2158,8 +2212,12 @@ def abrir_producto(driver, item, es_primero_de_grupo, grupo_multiple, estado_ok)
             return
         except ProductoNoEncontrado as e:
             print(f"    ⚠ {e} — probando búsqueda completa")
-    elif estado_ok and _saltar_a_producto_via_lupa(driver, cod):
-        return
+    elif estado_ok:
+        # El detalle del período leído antes sigue abierto: se cierra con
+        # EXIT y recién ahí se usa la lupa (con un diálogo abierto, la
+        # lupa no responde o actúa sobre el diálogo equivocado).
+        if cerrar_dialogos_abiertos(driver) and _saltar_a_producto_via_lupa(driver, cod):
+            return
     buscar_producto(driver, item["location"], item["supplier"], cod,
                     service_type=item["service_type"])
 
@@ -2278,6 +2336,7 @@ def main():
                 estado_ok = True
                 tarifas = leer_tarifa_vigente_componente(driver, item["codigo"],
                                                          price_code=item["price_code"])
+                cerrar_dialogos_abiertos(driver)
                 if not tarifas:
                     print(f"    ⚠ Sin tarifas leídas para {item['codigo']}")
                 filas_codigo = []
