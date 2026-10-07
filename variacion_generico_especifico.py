@@ -93,6 +93,10 @@ GENERICO         = os.environ.get("TOURPLAN_GENERICO", "").strip()
 SERVICE_TYPE_GENERICO = os.environ.get("TOURPLAN_GENERICO_SERVICE_TYPE", "").strip()
 LOCATIONS        = _env_lista("TOURPLAN_LOCATIONS")
 ESPECIFICOS      = _env_lista("TOURPLAN_ESPECIFICOS")
+# Sólo para ACTUALIZAR: "SUPPLIER@LOCATION,..." — qué proveedores cambiaron
+# en Tourplan (genéricos o específicos ya archivados). Vacío = todos los
+# específicos registrados.
+ACTUALIZAR_SELECCION = {tuple(x.rsplit("@", 1)) for x in _env_lista("TOURPLAN_ACTUALIZAR") if "@" in x}
 
 # Rango de fechas a analizar ("dd/mm/yyyy"); vacío = sólo el período
 # vigente hoy. Cada código puede tener varios períodos de RATES: se
@@ -1876,29 +1880,49 @@ def recalcular_comparacion(generico_rows, especifico_rows, locations):
 
 
 # ── Cola de trabajo según el modo ────────────────────────────────────
-def armar_comparaciones(modo, especificos_registrados):
-    """Lista de relaciones en el formato que espera descubrir_cola."""
-    comps = []
+def armar_plan(modo, esp_registrados, gen_archivados):
+    """Devuelve [(comparaciones, incluir_generico, incluir_especificos), ...]
+    — cada tramo en el formato que espera descubrir_cola."""
     if modo in ("GENERICO", "COMPLETO"):
-        for loc in LOCATIONS:
-            comps.append({"location": loc, "service_type": SERVICE_TYPE_GENERICO,
-                          "generico": GENERICO,
-                          "especificos": ESPECIFICOS if modo == "COMPLETO" else [],
-                          "price_code": PRICE_CODE_DEFAULT})
-    elif modo == "ESPECIFICO":
+        return [([{"location": loc, "service_type": SERVICE_TYPE_GENERICO,
+                   "generico": GENERICO,
+                   "especificos": ESPECIFICOS if modo == "COMPLETO" else [],
+                   "price_code": PRICE_CODE_DEFAULT} for loc in LOCATIONS],
+                 True, modo == "COMPLETO")]
+    if modo == "ESPECIFICO":
         # Sin genérico elegido: la comparación busca por prefijo de código
         # entre todos los genéricos archivados de la location.
-        for loc in LOCATIONS:
-            comps.append({"location": loc, "service_type": "", "generico": "",
-                          "especificos": ESPECIFICOS, "price_code": PRICE_CODE_DEFAULT})
-    elif modo == "ACTUALIZAR":
-        grupos = {}
-        for f in especificos_registrados:
-            grupos.setdefault((f["LOCATION"], f["GENERICO"]), set()).add(f["SUPPLIER"])
-        for (loc, gen), sups in sorted(grupos.items()):
-            comps.append({"location": loc, "service_type": "", "generico": gen,
-                          "especificos": sorted(sups), "price_code": PRICE_CODE_DEFAULT})
-    return comps
+        return [([{"location": loc, "service_type": "", "generico": "",
+                   "especificos": ESPECIFICOS, "price_code": PRICE_CODE_DEFAULT}
+                  for loc in LOCATIONS], False, True)]
+
+    # ACTUALIZAR: sólo lo seleccionado (o todos los específicos registrados).
+    sel = ACTUALIZAR_SELECCION
+    pares_esp = {(f["SUPPLIER"], f["LOCATION"]): f["GENERICO"] for f in esp_registrados}
+    pares_gen = {(f["SUPPLIER"], f["LOCATION"]) for f in gen_archivados}
+    if sel:
+        desconocidos = sorted(p for p in sel if p not in pares_esp and p not in pares_gen)
+        for sup, loc in desconocidos:
+            print(f"⚠ {sup}@{loc} no está archivado en {HOJA_GENERICOS} ni {HOJA_ESPECIFICOS} — se ignora.")
+        pares_esp = {p: g for p, g in pares_esp.items() if p in sel}
+        pares_gen = {p for p in pares_gen if p in sel and p not in pares_esp}
+    else:
+        pares_gen = set()
+    grupos = {}
+    for (sup, loc), gen in pares_esp.items():
+        grupos.setdefault((loc, gen), set()).add(sup)
+    comps_esp = [{"location": loc, "service_type": "", "generico": gen,
+                  "especificos": sorted(sups), "price_code": PRICE_CODE_DEFAULT}
+                 for (loc, gen), sups in sorted(grupos.items())]
+    comps_gen = [{"location": loc, "service_type": "", "generico": sup,
+                  "especificos": [], "price_code": PRICE_CODE_DEFAULT}
+                 for sup, loc in sorted(pares_gen)]
+    plan = []
+    if comps_esp:
+        plan.append((comps_esp, False, True))
+    if comps_gen:
+        plan.append((comps_gen, True, False))
+    return plan
 
 
 def validar_config(modo):
@@ -1932,27 +1956,32 @@ def main():
     ws_cmp = obtener_hoja(sh, HOJA_COMPARACION, COLS_COMPARACION)
 
     esp_registrados = leer_filas(ws_esp, normalizar_fila_tarifa)
-    if modo == "ACTUALIZAR" and not esp_registrados:
+    gen_archivados = leer_filas(ws_gen, normalizar_fila_tarifa)
+    if modo == "ACTUALIZAR" and not esp_registrados and not ACTUALIZAR_SELECCION:
         print(f"No hay específicos registrados en la pestaña {HOJA_ESPECIFICOS} — "
               f"corré antes un modo ESPECIFICO o COMPLETO.")
         return
 
-    comparaciones = armar_comparaciones(modo, esp_registrados)
-    incluir_generico = modo in ("GENERICO", "COMPLETO")
-    incluir_especificos = modo in ("ESPECIFICO", "COMPLETO", "ACTUALIZAR")
+    plan = armar_plan(modo, esp_registrados, gen_archivados)
+    if not plan:
+        print("Nada para actualizar con esa selección.")
+        return
+    incluir_generico = any(p[1] for p in plan)
+    incluir_especificos = any(p[2] for p in plan)
 
     driver = crear_driver()
     filas_salida, ok_codigos, grupos_fallidos = [], set(), set()
     cola, abortado = [], False
     try:
         login(driver)
-        cola = descubrir_cola(driver, comparaciones, incluir_generico, incluir_especificos)
-        pedidos = set()
-        for c in comparaciones:
-            if incluir_generico:
-                pedidos.add((c["generico"], c["location"]))
-            if incluir_especificos:
-                pedidos.update((s, c["location"]) for s in c.get("especificos", []))
+        cola, pedidos = [], set()
+        for comps, ig, ie in plan:
+            cola += descubrir_cola(driver, comps, ig, ie)
+            for c in comps:
+                if ig:
+                    pedidos.add((c["generico"], c["location"]))
+                if ie:
+                    pedidos.update((sup, c["location"]) for sup in c.get("especificos", []))
         encontrados = {(i["supplier"], i["location"]) for i in cola}
         for sup, loc in sorted(pedidos - encontrados):
             print(f"⚠ Sin códigos para {sup!r} en {loc} — ¿código/nombre correcto y "
@@ -2025,7 +2054,7 @@ def main():
     nuevas_gen = [f for f in filas_salida if f["ES_GENERICO"]]
     nuevas_esp = [f for f in filas_salida if not f["ES_GENERICO"]]
 
-    gen_rows = leer_filas(ws_gen, normalizar_fila_tarifa)
+    gen_rows = gen_archivados
     esp_rows = esp_registrados
     if incluir_generico:
         gen_rows = mezclar_tarifas(gen_rows, nuevas_gen, reemplazar_grupos, reemplazar_codigos)

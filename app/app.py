@@ -9,9 +9,9 @@ con tres modos:
     específicos y la compara contra el genérico ya archivado que
     comparta location/código.
   - Completo: ambos en la misma corrida.
-Además, "Actualizar comparación" re-corre todos los específicos ya
-registrados en el Sheet (pestaña ESPECIFICOS) sin tener que volver a
-cargarlos.
+Además, "Actualizar variación" (para usar justo después de cambiar
+valores en Tourplan) vuelve a leer sólo los proveedores que se indiquen
+—o todos los específicos registrados— y recalcula la comparación.
 
 El script corre como subproceso, parametrizado por variables de entorno
 (mismo patrón que Drive-TP-NX-App). Usuario/password de Tourplan y la
@@ -64,6 +64,22 @@ def cargar_catalogo():
             if loc not in entrada["locations"]:
                 entrada["locations"].append(loc)
     return catalogo
+
+
+def leer_registrados(sheet_url):
+    """[(supplier, location, "genérico"/"específico")] de lo ya archivado
+    en el Sheet de salida (pestañas GENERICOS y ESPECIFICOS)."""
+    from common.sheets_client import conectar_sheets, cargar_sheet
+    registrados = []
+    for hoja, tipo in (("GENERICOS", "genérico"), ("ESPECIFICOS", "específico")):
+        try:
+            ws = conectar_sheets(sheet_url, hoja, user_config.CREDENTIALS_PATH, user_config.TOKEN_PATH)
+        except ValueError:
+            continue  # la pestaña todavía no existe (se crea en la primera corrida)
+        filas, _ = cargar_sheet(ws)
+        pares = {(f.get("SUPPLIER", "").strip(), f.get("LOCATION", "").strip()) for f in filas}
+        registrados += [(s, l, tipo) for s, l in sorted(pares) if s and l]
+    return registrados
 
 
 def _leer_proceso(proc, state):
@@ -210,15 +226,31 @@ def render_principal():
         st.caption("Completá usuario/password y URL del Sheet en ⚙️ Configuración para poder ejecutar.")
 
     puede = completo and base_ok and SCRIPT_PATH.exists() and not state["running"]
-    c_run, c_upd, c_abort = st.columns(3)
+    c_run, c_abort = st.columns(2)
     run_clicked = c_run.button("Ejecutar", type="primary", disabled=not puede, use_container_width=True)
-    upd_clicked = c_upd.button(
-        "🔄 Actualizar comparación", disabled=not (base_ok and SCRIPT_PATH.exists()) or state["running"],
-        use_container_width=True,
-        help="Re-corre todos los específicos ya registrados en la pestaña ESPECIFICOS del Sheet "
-             "contra el genérico archivado.")
     abort_clicked = c_abort.button(
         "⏹ Abortar", disabled=not state["running"] or state["abort_requested"], use_container_width=True)
+
+    st.subheader("Actualizar variación")
+    st.caption("Usalo justo después de modificar valores en Tourplan: indicá qué proveedor cambió y "
+               "se vuelven a leer sólo esos (no todo lo anterior); la comparación se recalcula al terminar.")
+    if st.button("↻ Leer proveedores registrados del Sheet",
+                 disabled=not sheet_url or state["running"]):
+        try:
+            st.session_state["registrados"] = leer_registrados(sheet_url)
+        except Exception as e:
+            st.error(f"No pude leer el Sheet: {e}")
+    registrados = st.session_state.get("registrados", [])
+    if "registrados" in st.session_state and not registrados:
+        st.info("Todavía no hay nada archivado en el Sheet — corré antes un modo genérico/específico/completo.")
+    cambiados = st.multiselect(
+        "Proveedores que cambiaron", registrados, disabled=state["running"] or not registrados,
+        format_func=lambda r: f"{r[0]} — {r[1]} ({r[2]})")
+    todos_esp = st.checkbox("Actualizar todos los específicos registrados (más lento)",
+                            disabled=state["running"] or not registrados)
+    upd_clicked = st.button(
+        "🔄 Actualizar variación", disabled=not (base_ok and SCRIPT_PATH.exists())
+        or state["running"] or not (cambiados or todos_esp))
 
     def _fmt(d):
         return d.strftime("%d/%m/%Y") if d else ""
@@ -241,7 +273,10 @@ def render_principal():
             "TOURPLAN_ESPECIFICOS": especificos.strip(),
         })
     if upd_clicked:
-        _lanzar(state, {**env_comun, "TOURPLAN_MODO": "ACTUALIZAR"})
+        _lanzar(state, {
+            **env_comun, "TOURPLAN_MODO": "ACTUALIZAR",
+            "TOURPLAN_ACTUALIZAR": "" if todos_esp else ",".join(f"{r[0]}@{r[1]}" for r in cambiados),
+        })
 
     if abort_clicked:
         state["abort_requested"] = True

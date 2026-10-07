@@ -842,8 +842,11 @@ Configuración elegida en la interfaz (`app/app.py`):
 
 1. **Modo**: `GENERICO` (extrae y archiva el genérico), `ESPECIFICO`
    (extrae específicos y compara contra el genérico archivado) o
-   `COMPLETO`. Además el botón "Actualizar comparación" (`ACTUALIZAR`)
-   re-extrae todos los específicos ya registrados.
+   `COMPLETO`. Además "Actualizar variación" (`ACTUALIZAR`), pensado para
+   usarse justo después de modificar valores en Tourplan: se indica qué
+   proveedor(es) cambiaron (genéricos o específicos ya archivados, listados
+   desde el Sheet) y sólo esos se vuelven a leer — no hace falta releer
+   todo lo anterior. Opcional: marcar "todos los específicos registrados".
 2. **Proveedor**: genérico = desplegable del catálogo
    `config/genericos.csv` (cada genérico habilita sólo las locations
    donde está cargado; selección múltiple porque hay locations que se
