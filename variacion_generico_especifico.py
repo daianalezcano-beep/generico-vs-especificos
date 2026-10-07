@@ -37,8 +37,9 @@
 #
 #   GUARDADO CONSTANTE: las tarifas de cada código se escriben en el Sheet
 #   apenas se leen (reemplazando sus filas archivadas). La COMPARACIÓN se
-#   calcula una sola vez, al final, cuando ya se exportaron todos los
-#   códigos (también si se aborta o hay un error, con lo ya guardado); los códigos archivados que
+#   calcula al terminar TODOS los códigos de cada proveedor (mientras se
+#   exporta el siguiente) y, al final, lo que haya quedado sin comparar
+#   (también si se aborta o hay un error, con lo ya guardado); los códigos archivados que
 #   ya no existen en Tourplan sólo se borran cuando el supplier se leyó
 #   completo y sin fallas (no con TOURPLAN_LIMIT_PRUEBA ni si falló algún
 #   código), para no degradar un archivo bueno con uno incompleto.
@@ -2194,6 +2195,8 @@ def main():
     # ── Guardado: cada código se escribe en el Sheet apenas se lee; la
     # comparación se calcula UNA vez, al final, con todo ya exportado. ──
     ahora_locs = set(LOCATIONS)
+    locs_sucias = set()      # locations con datos guardados desde la última comparación
+    comparo_alguna_vez = False
 
     def limpiar_grupo(sup, loc, es_gen, vigentes):
         """Supplier leído completo y sin fallas: borra de lo archivado los
@@ -2209,7 +2212,7 @@ def main():
             print(f"🧹 {ws.title}: {len(obsoletos)} filas de códigos que ya no existen en Tourplan")
 
     def actualizar_comparacion(locs):
-        nonlocal cmp_rows
+        nonlocal cmp_rows, locs_sucias, comparo_alguna_vez
         locs = set(locs)
         if not locs:
             return
@@ -2220,6 +2223,8 @@ def main():
         cmp_rows = [f for f in cmp_rows if str(f.get("LOCATION", "")) not in locs] + comp
         reescribir_hoja(ws_cmp, COLS_COMPARACION, cmp_rows, formato_pct_col="DIFERENCIA_PCT")
         print(f"✅ {HOJA_COMPARACION}: {len(comp)} filas recalculadas ({', '.join(sorted(locs))})")
+        locs_sucias -= locs
+        comparo_alguna_vez = True
 
     driver = crear_driver()
     cola, abortado, fallo_fatal = [], False, False
@@ -2252,10 +2257,12 @@ def main():
             vigentes_por_grupo.setdefault(g, set()).add(it["codigo"])
             es_gen_grupo[g] = it["es_generico"]
             restantes[g] = restantes.get(g, 0) + 1
-        cant_por_supplier = {}
+        cant_por_supplier, restantes_sup, locs_sup = {}, {}, {}
         for it in cola:
             k = it["supplier"].strip().upper()
             cant_por_supplier[k] = cant_por_supplier.get(k, 0) + 1
+            restantes_sup[k] = restantes_sup.get(k, 0) + 1
+            locs_sup.setdefault(k, set()).add(it["location"])
 
         supplier_anterior, pos_en_supplier, estado_ok = None, 0, False
         for i, item in enumerate(cola):
@@ -2295,6 +2302,7 @@ def main():
                 reemplazar_filas_codigo(sh, ws_dest, COLS_TARIFAS, destino, g[0], g[1],
                                         item["codigo"], filas_codigo)
                 print(f"    💾 {ws_dest.title}: {len(filas_codigo)} filas de {item['codigo']} guardadas")
+                locs_sucias.add(item["location"])
                 procesados_ok += 1
             except AbortadoPorUsuario:
                 raise
@@ -2317,6 +2325,14 @@ def main():
                     print(f"⚠ {g[0]}/{g[1]}: lectura incompleta — sólo se pisaron los códigos leídos OK.")
             except Exception as e:
                 print(f"    ⚠ No pude limpiar el Sheet de {g[0]}/{g[1]}: {e}")
+            # Al terminar TODOS los códigos de un proveedor (en todas sus
+            # locations) se compara; mientras se exporta el siguiente.
+            restantes_sup[k_sup] -= 1
+            if restantes_sup[k_sup] == 0:
+                try:
+                    actualizar_comparacion(locs_sup[k_sup])
+                except Exception as e:
+                    print(f"    ⚠ No pude actualizar la comparación (se reintenta al final): {e}")
     except AbortadoPorUsuario:
         abortado = True
         print("\n⏸️ Abortado por el usuario — se guarda lo ya leído.")
@@ -2331,10 +2347,11 @@ def main():
             print(f"  ⚠ logout falló: {e}")
         driver.quit()
 
-    # Cierre: recalcular la comparación de toda location tocada.
+    # Cierre: comparar lo que quedó sin comparar (p. ej. si se abortó a
+    # mitad de un proveedor); si no se comparó nada, todas las locations.
     locs_tocadas = {i["location"] for i in cola} | ahora_locs
     try:
-        actualizar_comparacion(locs_tocadas)
+        actualizar_comparacion(locs_sucias if comparo_alguna_vez else locs_tocadas)
     except Exception:
         print("❌ No pude guardar lo pendiente en el Sheet:")
         traceback.print_exc()
