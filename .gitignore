@@ -1,9 +1,4 @@
 __pycache__/
 *.pyc
 screenshots/
-tarifas_vigentes.xlsx
-comparacion_gap.xlsx
-tarifas_trfpo_*.xlsx
-tarifas_generico_*.xlsx
-extraccion_vigencias.xlsx
-muestras/mapeo_resultado.csv
+.venv/

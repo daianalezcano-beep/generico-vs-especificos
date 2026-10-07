@@ -6,51 +6,28 @@ ajustan/precisan lo que dice `BRIEF.md` a partir de datos reales).
 
 ## Estado actual (resumen — ver secciones más abajo para el detalle)
 
-**Fase 2 (matching, `matching_engine.py`)**: terminada, validada contra
-los 3 Product List reales de `muestras/` (`python test_matching.py`).
-Sin pendientes propios — ver "Motor de matching" más abajo por los
-hallazgos de esa validación.
+**Todo el trabajo se ejecuta desde la app local** (`app/`, ver `README.md`):
+`variacion_generico_especifico.py` extrae las tarifas de Tourplan, las
+archiva en un Google Sheet por genérico y calcula la comparación. Ver la
+sección final "App local y script único" para las decisiones de esa etapa.
 
-**Fase 1 + Fase 3 en una sola corrida (`extraccion_tarifas_vigentes.py`)**:
-extrae tarifas vigentes de Tourplan real Y calcula la comparación de
-gap al final, en la misma ejecución. Validado con varias corridas
-reales contra Tourplan Test — la más reciente trajo 116 códigos TRFPO +
-52 de 6HOUS1 en BUE, con 204/208 filas de la comparación sin ninguna
-bandera de revisión. En el camino se encontraron y corrigieron bugs
-reales (Chrome no preinstalado en Colab, columna Code confundida con
-Location, RATES mostrando una lista de períodos en vez de la grilla
-directamente, moneda en la lista de períodos y no en la grilla
-abierta, formato numérico US/UK y no argentino, catch-all de pax 9999,
-período de TRFPO usado en cada comparación no visible) — el detalle de
-cada uno está en su propia sección más abajo.
+**Validado contra Tourplan real desde la app**: TRFPO en BUE (116 códigos),
+comparación por pax break/vehículo con 6HOUS1 y 6BAVA1, y peajes PEAPO
+(código idéntico al genérico, mismo pax break).
 
-**`comparacion_gap.py`**: la misma Fase 3, como script standalone
-(pandas) para re-correr sólo la comparación sin volver a scrapear
-Tourplan — misma lógica que la versión embebida, ambas dan resultados
-idénticos contra los mismos datos reales.
+**Pendiente**: GUIAPO y demás genéricos sin validar (Price Code, service type
+y criterio de match propios); búsqueda de específico por nombre; bandera para
+genérico en 0 y para superposición parcial de períodos; botón de "recalcular
+comparación" sin leer Tourplan; autocompletar proveedor; Sheet de GUIAPJ/GUIAPR.
 
-**`MODO` (`SOLO_GENERICO`/`SOLO_TRANSPORTISTA`/`COMPLETO`)**: TRFPO ya
-no hace falta re-extraerlo en cada corrida — se guarda en
-`tarifas_trfpo_<LOCATION>.xlsx` y se reusa. Ver "Resuelto: desacoplar
-la extracción de TRFPO...".
-
-**`DIFERENCIA_PCT` con signo %**: visible en el Excel sin cambiar el
-valor guardado. Ver esa sección.
-
-**Generalización a PEAPO/GUIAPO (y cualquier otro genérico futuro)**:
-`COMPARACIONES` ya no está atado a TRFPO — es una lista de relaciones
-genérico/específico independientes, cada una con su propio genérico,
-service type, específicos y Price Code. Ver "Generalización: soporte
-para múltiples relaciones genérico/específico (PEAPO, GUIAPO, ...)".
-
-**Pendiente**: Fase 4 (Excel final con el gap resaltado/formateado) sin
-empezar. Backlog restante: generar una fila por cada período de TRFPO
-cuando hay más de uno superpuesto en vez de sólo el de mayor
-superposición (ver "Visibilidad de qué período se comparó"); scroll de
-`listar_codigos_supplier` sigue sin ser 100% confiable de corrida a
-corrida (ver "Scroll virtual"); PEAPO/GUIAPO están soportados en el
-código pero sin validar aún contra Tourplan real (sólo TRFPO fue
-validado con corridas reales).
+**Nota sobre las secciones siguientes**: describen la construcción original
+con scripts sueltos para Google Colab (`extraccion_tarifas_vigentes.py`,
+`comparacion_gap.py`, `matching_engine.py`, `test_matching.py`,
+`extraccion_vigencias.py` y `muestras/`). Esos archivos ya no están en el árbol
+de trabajo pero se conservan en el historial de git (último commit que los
+tiene: `1cfc007`, ej. `git show 1cfc007:matching_engine.py`). Los hallazgos y
+bugs documentados siguen valiendo: la lógica vive ahora en
+`variacion_generico_especifico.py`.
 
 ## Alcance
 

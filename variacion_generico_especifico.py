@@ -7,6 +7,11 @@
 #   específico EN LA MISMA CORRIDA (la comparación se recalcula siempre
 #   que se suma o cambia un dato, no hace falta un paso aparte).
 #
+#   (Los scripts originales para Colab que se mencionan en los comentarios de
+#   abajo —extraccion_tarifas_vigentes.py, comparacion_gap.py,
+#   matching_engine.py— ya no están en el repo; siguen en el historial de
+#   git, p. ej. `git show 1cfc007:extraccion_tarifas_vigentes.py`.)
+#
 #   Los helpers de Tourplan (login, búsqueda de productos, lectura de
 #   RATES por scroll virtual, períodos, price code) y la comparación de
 #   gap por vehículo (construir_comparacion_gap) son COPIA de

@@ -1,150 +1,84 @@
 # generico-vs-especificos
 
-Herramienta para comparar el valor cargado en un supplier genérico
-(**TRFPO** — Transporte Por Asignar, **PEAPO**, **GUIAPO**, o cualquier
-otro que se agregue) contra los tarifarios reales vigentes de cada
-proveedor específico, en Tourplan NX. `COMPARACIONES` admite cualquier
-cantidad de relaciones genérico/específico independientes (ver
-`extraccion_tarifas_vigentes.py`) — no está atado a TRFPO. Ver
-`BRIEF.md` para el pedido de negocio original (enfocado en TRFPO/
-transportistas) y `DISENO.md` para las decisiones de diseño, la
-generalización a PEAPO/GUIAPO y los hallazgos de la validación contra
-datos reales.
+App local (Streamlit) para comparar, en Tourplan NX, el costo cargado en un
+supplier **genérico** (TRFPO, GUIAPO, PEAPO y los demás "por asignar") contra
+los tarifarios reales de cada proveedor **específico**. Lee las tarifas con
+Selenium, las archiva en Google Sheets (un Sheet por genérico) y calcula la
+variación en USD y % por código, pax break y período.
 
-## App local (Streamlit)
+Ver `BRIEF.md` (pedido de negocio original) y `DISENO.md` (decisiones de
+diseño, hallazgos de validación y pendientes).
 
-`app/` contiene la interfaz: **doble clic en `app/run_app.bat`** para abrirla
-y en `app/actualizar_app.bat` para traer cambios nuevos (git pull). Corre
-`variacion_generico_especifico.py` con modo (genérico/específico/completo),
-supplier y locations (selección múltiple), y rango de fechas; guarda todo en
-un Google Sheet (pestañas GENERICOS, ESPECIFICOS, COMPARACION) y recalcula la
-comparación en cada corrida. Catálogo de genéricos en `config/genericos.csv`.
-Usuario/password de Tourplan y URL del Sheet se cargan en ⚙️ Configuración
-(se guardan fuera del repo). Detalles y pendientes en `DISENO.md`
-("App local y script único"). Sin validar todavía contra Tourplan real.
+## Cómo usarla
 
-## Estado actual
+1. **Instalar** (una sola vez): Python 3, Git y Google Chrome. Clonar el repo
+   en una carpeta con ruta corta.
+2. **Abrir la app**: doble clic en `app/run_app.bat` (la primera vez instala
+   las dependencias). Se abre en `localhost:8501`. Para traer cambios nuevos
+   del repo: `app/actualizar_app.bat`.
+3. **⚙️ Configuración** (una vez por PC, se guarda en
+   `~/.tourplan-nx-app/config.json`, fuera del repo): usuario y password de
+   Tourplan, URL de Tourplan (producción por defecto), la URL del Google Sheet
+   de salida de cada genérico (TRFPO, GUIAPO, PEAPO a la vista, el resto en un
+   desplegable), el modo headless y el `credentials.json` de Google (OAuth de
+   escritorio). La primera corrida abre el navegador para dar permiso a
+   Google.
+4. **▶ Comparación**:
+   - **Modo**: *Solo genérico* (extrae y archiva el genérico), *Solo
+     específico* (extrae específicos y los compara contra el genérico
+     archivado) o *Completo*.
+   - **Genérico y locations** (selección múltiple): el catálogo está en
+     `config/genericos.csv`; cada genérico habilita sólo las locations donde
+     está cargado.
+   - **Específicos**: código o nombre del proveedor, separados por coma.
+   - **Rango de fechas** (opcional; sin rango = período vigente hoy).
+   - **Actualizar variación**: para usar justo después de modificar valores en
+     Tourplan; se elige el servicio y el/los proveedores que cambiaron y sólo
+     se vuelven a leer esos.
 
-- ✅ **Fase 2 — motor de matching** (`matching_engine.py`): longest-prefix-match
-  código específico → TRFPO, parseo de vehículo/rango de pax desde
-  `Description`, banderas (JAPON/CRUCERO/SIN_GUIA/CASO_ESPECIAL_SIB/
-  NO_TRANSPORTE), clasificación por categoría, indexado por
-  `(LOCATION, CATEGORIA, GUIA, PAX)` contra la tabla de bases. Validado
-  con los 3 Product List reales en `muestras/` — correr
-  `python test_matching.py`.
-- ✅ **Fase 1 + Fase 3 en una sola corrida**
-  (`extraccion_tarifas_vigentes.py`): extrae tarifas vigentes de
-  Tourplan real Y calcula la comparación de gap al final, en la misma
-  ejecución — genera `tarifas_vigentes.xlsx` y `comparacion_gap.xlsx`
-  de una sola vez. `COMPARACIONES` soporta cualquier cantidad de
-  relaciones genérico/específico (TRFPO, PEAPO, GUIAPO, o las que se
-  agreguen) en la misma corrida. Validado con varias corridas reales
-  contra Tourplan Test para TRFPO (última: 116 códigos TRFPO + 52 de
-  6HOUS1 en BUE, matching limpio en 204/208 filas) — bugs reales
-  encontrados y corregidos en el camino, ver DISENO.md. PEAPO/GUIAPO
-  están soportados en el código pero todavía sin validar contra
-  Tourplan real. El gap se calcula por VEHÍCULO (sufijo de código +
-  categoría/guía parseadas de la Description, contra
-  `config/tabla_bases_vehiculo_pax.csv`), no por el pax bruto que
-  reportó el específico — ver DISENO.md "Bug real: matching por
-  vehículo".
-- ⏳ Fase 4 (salida Excel final con el gap resaltado): pendiente.
+## Qué guarda
+
+En el Sheet de cada genérico (las pestañas se crean solas):
+
+- `GENERICOS`: tarifas archivadas del genérico, una fila por código × período ×
+  pax break.
+- `ESPECIFICOS`: lo mismo para los proveedores específicos (también es el
+  registro de qué se puede actualizar).
+- `COMPARACION`: el gap genérico vs específico, con `FLAGS` para lo que hay que
+  revisar. Se calcula al terminar cada proveedor y al final de la corrida.
+
+Las tarifas se guardan código a código mientras se leen; si se aborta o hay un
+error no se pierde lo ya leído.
 
 ## Estructura
 
-- `BRIEF.md` — brief de negocio original.
-- `DISENO.md` — decisiones de diseño y hallazgos de validación.
-- `matching_engine.py` — motor de matching (Fase 2), puro pandas/regex.
-- `test_matching.py` — corrida de validación contra `muestras/`.
-- `extraccion_tarifas_vigentes.py` — **el script que corrés**. Extrae
-  tarifa vigente por código (Fase 1), Selenium contra Tourplan NX, y al
-  final calcula la comparación de gap (Fase 3) automáticamente, todo en
-  una sola ejecución. No necesita CSV/Excel de entrada — busca los
-  códigos él mismo en Tourplan. Editar `USERNAME`, `PASSWORD`,
-  `COMPARACIONES`, `TIPO_CAMBIO_ARS_USD`, `PERIODO_ANALISIS_DESDE/HASTA`,
-  `PRICE_CODE_DEFAULT` y `MODO` (todo al principio del archivo) antes de
-  correr. `MOSTRAR_CAPTURAS=True` muestra las capturas inline si se
-  corre en Colab/Jupyter (opcional). Salida: `tarifas_vigentes.xlsx`
-  (una fila por código + período + rango de pax) y
-  `comparacion_gap.xlsx` (el gap de cada relación genérico/específico,
-  con `DIFERENCIA_PCT` formateado con signo %).
-  - `COMPARACIONES` es una lista de relaciones genérico/específico
-    independientes — no está atada a TRFPO. Cada elemento trae su
-    propia `location`, `service_type`, `generico`, `especificos`
-    (lista de códigos de proveedor específico) y `price_code`. Ya trae
-    la relación TRFPO vs. transportistas y ejemplos comentados de
-    PEAPO (`service_type: "PJ"`) y GUIAPO (`service_type: "GU"`) —
-    para agregar una relación nueva alcanza con sumar un elemento más
-    a la lista, sin tocar el resto del script.
-  - `MODO = "COMPLETO"` (default): extrae genérico(s) + específicos.
-  - `MODO = "SOLO_GENERICO"`: extrae sólo los genéricos de
-    `COMPARACIONES` y los guarda en
-    `tarifas_generico_<GENERICO>_<LOCATION>.xlsx` para reusar después —
-    correr una vez cuando el genérico cambie (1-2 veces al año), no en
-    cada corrida.
-  - `MODO = "SOLO_ESPECIFICOS"`: extrae sólo los específicos listados y
-    arma la comparación contra los genéricos ya guardados (falla con un
-    error claro si no corriste `SOLO_GENERICO`/`COMPLETO` antes para
-    esa combinación de genérico + location).
-  - ⚠️ Si corrés esto en **Google Colab** y vas a usar `SOLO_GENERICO`
-    un día y `SOLO_ESPECIFICOS` en una sesión posterior (el caso
-    normal, ya que un genérico se mantiene fijo bastante tiempo): el
-    disco de Colab no persiste entre sesiones. Poné `CACHE_DIR`
-    apuntando a Google Drive (ej.
-    `"/content/drive/MyDrive/generico-vs-especificos"`) para que
-    `tarifas_generico_<GENERICO>_<LOCATION>.xlsx` sobreviva — el script
-    monta Drive solo, no hace falta un `drive.mount(...)` en otra
-    celda (la primera vez en un navegador/cuenta nueva, Colab igual va
-    a pedir un click de autorización — eso es de Google, no se puede
-    saltear).
-- `comparacion_gap.py` — la misma Fase 3, como script standalone
-  (pandas) para re-correr SÓLO la comparación sobre un
-  `tarifas_vigentes.xlsx` ya existente, sin volver a scrapear Tourplan.
-  Uso: `python comparacion_gap.py [tarifas_vigentes.xlsx] [salida.xlsx]`.
-- `extraccion_vigencias.py` — relevamiento de **vigencias** (no de
-  tarifas: no lee ningún valor de costo). Dado un supplier/location/
-  service type (o un código puntual), busca sus product codes en
-  Tourplan, entra a RATES de cada uno y exporta las columnas de la
-  LISTA de períodos (Rate Period, PC, Buy/Sell Currency, Sale Period,
-  Rate Status, Rate Text, Rate Name) **sin abrir ningún período** —
-  pensado para identificar rápido qué vigencias necesitan actualización
-  (períodos vencidos, sin cargar, con estado no confirmado, etc.), no
-  para leer costos por rango de pax. A diferencia de
-  `extraccion_tarifas_vigentes.py`, usa un Excel de entrada como cola
-  de trabajo (hoja `PRODUCTOS`, ESTADO/OBSERVACIONES, guardado fila a
-  fila y resumible — ver skill `armando-excel-como-cola-de-trabajo`),
-  no una lista editada al principio del script. Ninguno de
-  LOCATION/SUPPLIER/SERVICE TYPE/CODIGO es obligatorio por sí solo
-  (vacío = "todos" en esa dimensión), pero deben venir completos al
-  menos 2 de esos 4 campos. Por fila: si RATE FROM/RATE TO quedan
-  vacíos, exporta sólo el primer período de la lista tal cual la
-  entrega Tourplan (el más reciente/"último", sin ordenar nada); si se
-  completan, exporta TODOS los períodos que se solapen con ese rango.
-  Salida: hoja `VIGENCIAS` en el mismo archivo, una fila por período
-  exportado. Corriendo el script sin ningún Excel todavía creado, lo
-  genera con una fila de ejemplo y comentarios por columna.
-- `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax,
-  por location/categoría/guía (editable, sin hardcodear en código).
-  Fase 3 la usa para elegir el tramo de TRFPO que le corresponde a cada
-  código específico según su vehículo (por sufijo de código, ej. "19" =
-  Sprinter 19) y categoría/guía (parseadas de la Description), en vez
-  de comparar contra el PAX_DESDE/HASTA que reportó el específico en su
-  propia tarifa — ver DISENO.md "Bug real: matching por vehículo".
-  `comparacion_gap.py` la lee directo de este archivo;
-  `extraccion_tarifas_vigentes.py` (celda única de Colab, sin archivos
-  hermanos disponibles) tiene su propia copia embebida — mantenerlas
-  sincronizadas si se edita el CSV.
-- `muestras/` — 3 Product List reales (TRFPO + 2 transportistas, BUE)
-  usados para validar el matching.
+- `app/` — la app: `app.py` (interfaz), `common/` (credenciales, Sheets,
+  abortar, Chrome), `run_app.bat`, `actualizar_app.bat`, `requirements.txt`.
+- `variacion_generico_especifico.py` — el script que ejecuta la app (Selenium +
+  Google Sheets + comparación), parametrizado por variables de entorno.
+- `config/genericos.csv` — catálogo de genéricos (location, supplier, nombre,
+  service type).
+- `config/tabla_bases_vehiculo_pax.csv` — vehículo según rango de pax por
+  location/categoría/guía; el script tiene una copia embebida (mantenerlas
+  sincronizadas si se edita).
+- `BRIEF.md`, `DISENO.md` — documentación.
 
-## Uso rápido
+## Estado
 
-```bash
-pip install pandas openpyxl
-python test_matching.py                              # valida el matching contra las muestras
-python comparacion_gap.py tarifas_vigentes.xlsx       # Fase 3, sobre una salida real de Fase 1
-```
+- **TRFPO en BUE**: genérico y comparación validados contra Tourplan real desde
+  la app (match por pax break y por vehículo, peajes PEAPO incluidos).
+- **Sin validar todavía**: GUIAPO, BOXLPO, bodega, navegación, parking y tip
+  (Price Code, service type y criterio de match propios); búsqueda de específico
+  por nombre (sólo por código está confirmada).
+- **Pendientes**: bandera para genérico en 0 y para superposición parcial de
+  períodos; botón para recalcular la comparación sin leer Tourplan; autocompletar
+  el proveedor consultando Tourplan; definir el Sheet de GUIAPJ/GUIAPR. Detalle
+  en `DISENO.md`.
 
-Para correr la extracción real (Fase 1) hace falta Selenium + Chrome y
-credenciales de Tourplan Test — ver cabecera de
-`extraccion_tarifas_vigentes.py`.
+## Historial
+
+Antes de pasar todo a la app existían scripts sueltos para Google Colab
+(`extraccion_tarifas_vigentes.py`, `comparacion_gap.py`, `matching_engine.py`,
+`test_matching.py`, `extraccion_vigencias.py` y las muestras de `muestras/`). Se
+eliminaron del árbol de trabajo pero siguen en el historial de git, por ejemplo
+`git show 1cfc007:extraccion_tarifas_vigentes.py`.
