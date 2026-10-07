@@ -99,17 +99,33 @@ def render_configuracion():
     with st.form("form_config"):
         tp_usuario = st.text_input("Usuario Tourplan", value=cfg.get("tp_usuario", ""))
         tp_password = st.text_input("Password Tourplan", value=cfg.get("tp_password", ""), type="password")
+        tp_base_url = st.text_input(
+            "URL de Tourplan", value=cfg.get("tp_base_url", PRODUCCION_URL),
+            help="Producción por default. Para probar contra Test, cambiala acá "
+                 "(ej. https://tourplannx.eurotur.com.ar/TourplanNX_Test).")
         sheet_url = st.text_input(
             "URL del Google Sheet de salida",
             value=cfg.get("sheet_urls", {}).get(SCRIPT_KEY, ""),
             help="Ahí se guardan las pestañas GENERICOS, ESPECIFICOS y COMPARACION.",
         )
         headless = st.checkbox("Correr Chrome sin ventana (headless)", value=bool(cfg.get("headless", False)))
+        credenciales = st.file_uploader(
+            "Credenciales de Google (credentials.json, OAuth de escritorio)", type="json",
+            help="Hace falta una sola vez por PC para que la app pueda escribir en el Sheet. "
+                 "Se guarda en tu carpeta de usuario, fuera del repo. La primera corrida abre "
+                 "el navegador para dar permiso.")
+        if os.path.exists(user_config.CREDENTIALS_PATH):
+            st.caption("✅ Ya hay un credentials.json guardado en esta PC (subir otro lo reemplaza).")
         if st.form_submit_button("Guardar"):
+            if credenciales is not None:
+                os.makedirs(user_config.CONFIG_DIR, exist_ok=True)
+                with open(user_config.CREDENTIALS_PATH, "wb") as f:
+                    f.write(credenciales.getvalue())
             urls = dict(cfg.get("sheet_urls", {}))
             urls[SCRIPT_KEY] = sheet_url.strip()
             cfg.update({"tp_usuario": tp_usuario.strip(), "tp_password": tp_password,
-                        "sheet_urls": urls, "headless": headless})
+                        "sheet_urls": urls, "headless": headless,
+                        "tp_base_url": tp_base_url.strip() or PRODUCCION_URL})
             user_config.guardar(cfg)
             st.success("Configuración guardada.")
 
@@ -156,7 +172,8 @@ def render_principal():
 
     usuario, password = user_config.tp_credenciales_default()
     sheet_url = user_config.sheet_url_default(SCRIPT_KEY)
-    base_url = st.text_input("URL de Tourplan", value=PRODUCCION_URL)
+    base_url = st.text_input(
+        "URL de Tourplan", value=user_config.cargar().get("tp_base_url", PRODUCCION_URL))
 
     st.subheader("1. Modo")
     modo_label = st.radio("Modo", [m[0] for m in MODOS], label_visibility="collapsed",
