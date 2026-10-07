@@ -186,17 +186,21 @@ def render_principal():
 
     if modo in ("GENERICO", "COMPLETO"):
         generico = st.selectbox(
-            "Supplier genérico", sorted(catalogo),
+            "Supplier genérico", sorted(catalogo), index=None,
+            placeholder="Elegí un supplier genérico",
             format_func=lambda s: f"{s} — {catalogo[s]['nombre']}",
-            disabled=state["running"])
-        disponibles = catalogo[generico]["locations"]
-        # key por supplier: al cambiar de genérico se resetea la selección
-        # (cada uno habilita solo las locations donde está cargado).
-        locations_gen = st.multiselect(
-            f"Locations de {generico} (buscá o elegí las que necesites)", disponibles, default=[],
-            key=f"loc_gen_{generico}", disabled=state["running"])
-        if not catalogo[generico]["service_type"]:
-            st.caption(f"⚠️ {generico} no tiene Service Type definido en config/genericos.csv todavía.")
+            disabled=state["running"]) or ""
+        if generico:
+            disponibles = catalogo[generico]["locations"]
+            # key por supplier: al cambiar de genérico se resetea la selección
+            # (cada uno habilita solo las locations donde está cargado).
+            locations_gen = st.multiselect(
+                f"Locations de {generico} (buscá o elegí las que necesites)", disponibles, default=[],
+                key=f"loc_gen_{generico}", disabled=state["running"])
+            if not catalogo[generico]["service_type"]:
+                st.caption(f"⚠️ {generico} no tiene Service Type definido en config/genericos.csv todavía.")
+        else:
+            st.caption("Elegí el supplier genérico para ver sus locations.")
 
     if modo in ("ESPECIFICO", "COMPLETO"):
         especificos = st.text_input(
