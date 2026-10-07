@@ -870,9 +870,17 @@ Decisiones de implementación:
 - Las filas del Sheet se leen con `UNFORMATTED_VALUE` y se normalizan de
   tipo (pax enteros, tarifas float, `ES_GENERICO` bool) — no depende del
   formato regional del Sheet.
-- Si una corrida no pudo leer algún código de un supplier, o se usó
-  `TOURPLAN_LIMIT_PRUEBA`, ese supplier no reemplaza su archivo completo:
-  sólo se pisan los códigos leídos OK. Abortar desde la app no escribe nada.
+- **Guardado progresivo**: se vuelca al Sheet cada 10 códigos leídos, al
+  terminar cada supplier y al final (también si se aborta o hay un error),
+  recalculando la comparación en cada guardado. Cada código leído OK
+  reemplaza sus filas archivadas; los códigos archivados que ya no existen
+  en Tourplan sólo se borran si el supplier se leyó completo y sin fallas
+  (no con `TOURPLAN_LIMIT_PRUEBA` ni si falló algún código).
+- **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
+  mismo supplier se encadenan — el primero se abre buscando sólo por
+  proveedor y los siguientes por el popover de la lupa, con caída a la
+  búsqueda completa ante cualquier duda. La cola se ordena por supplier
+  (aunque cambie la location) para poder encadenar.
 - El Sheet se abre antes de loguear en Tourplan (un error de URL/credenciales
   no gasta una licencia) y se hace logout al terminar.
 - En modo `ESPECIFICO` no hay genérico elegido: la comparación busca por

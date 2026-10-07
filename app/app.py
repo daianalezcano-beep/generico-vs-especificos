@@ -172,8 +172,9 @@ def render_principal():
 
     usuario, password = user_config.tp_credenciales_default()
     sheet_url = user_config.sheet_url_default(SCRIPT_KEY)
-    base_url = st.text_input(
-        "URL de Tourplan", value=user_config.cargar().get("tp_base_url", PRODUCCION_URL))
+    # La URL de Tourplan se carga una sola vez en ⚙️ Configuración.
+    base_url = user_config.cargar().get("tp_base_url", PRODUCCION_URL)
+    st.caption(f"Tourplan: {base_url} (se cambia en ⚙️ Configuración)")
 
     st.subheader("1. Modo")
     modo_label = st.radio("Modo", [m[0] for m in MODOS], label_visibility="collapsed",
@@ -192,7 +193,7 @@ def render_principal():
         # key por supplier: al cambiar de genérico se resetea la selección
         # (cada uno habilita solo las locations donde está cargado).
         locations_gen = st.multiselect(
-            f"Locations de {generico}", disponibles, default=disponibles,
+            f"Locations de {generico} (buscá o elegí las que necesites)", disponibles, default=[],
             key=f"loc_gen_{generico}", disabled=state["running"])
         if not catalogo[generico]["service_type"]:
             st.caption(f"⚠️ {generico} no tiene Service Type definido en config/genericos.csv todavía.")

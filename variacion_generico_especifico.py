@@ -35,11 +35,17 @@
 #                  qué específicos actualizar con ACTUALIZAR
 #     COMPARACION  gap genérico vs específico (una fila por código/pax/período)
 #
-#   Si una corrida no pudo leer algún código de un supplier, o se
-#   limitó la cola (TOURPLAN_LIMIT_PRUEBA), ese supplier NO reemplaza su
-#   archivo completo: sólo se pisan los códigos que sí se leyeron bien,
-#   para no degradar un archivo bueno con uno incompleto. Si se aborta
-#   desde la app no se escribe nada.
+#   GUARDADO PROGRESIVO: se vuelca al Sheet cada FLUSH_CADA códigos, al
+#   terminar cada supplier y al final (también si se aborta o hay un
+#   error), y la comparación se recalcula en cada guardado. Cada código
+#   leído OK reemplaza sus filas archivadas; los códigos archivados que
+#   ya no existen en Tourplan sólo se borran cuando el supplier se leyó
+#   completo y sin fallas (no con TOURPLAN_LIMIT_PRUEBA ni si falló algún
+#   código), para no degradar un archivo bueno con uno incompleto.
+#
+#   NAVEGACIÓN: con 2+ códigos del mismo supplier se usa el atajo de la
+#   lupa de Product Search (portado de Drive-TP-NX-App), con caída a la
+#   búsqueda completa ante cualquier duda.
 #
 #   SIN VALIDAR contra Tourplan real desde esta app: sólo TRFPO estaba
 #   confirmado en el script original. Búsqueda de específico por NOMBRE
@@ -1940,6 +1946,191 @@ def validar_config(modo):
 
 
 # ── Main ──────────────────────────────────────────────────────────
+# ── Navegación optimizada por la lupa de Product Search ──────────────
+# Portada de Drive-TP-NX-App (extraccion_vigencias.py). Con 2+ códigos del
+# mismo SUPPLIER, buscar_producto() resetea la página y retipea todos los
+# filtros por CADA código. Atajo confirmado por la usuaria: estando
+# parado en un producto de #/product, la lupa abre un popover con la
+# lista de la búsqueda anterior, y ahí se elige el código siguiente.
+# La primera fila del popover es SIEMPRE el producto actual (se descarta).
+# Ante cualquier duda se cae a buscar_producto() (camino lento pero
+# validado), nunca queda en un estado ambiguo.
+
+def _en_contexto_producto(driver):
+    """True si el driver quedó parado en un producto (menú con RATES)."""
+    try:
+        img = WebDriverWait(driver, 4).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "nav img")))
+        jc(driver, img)
+        time.sleep(2 * VELOCIDAD)
+        items = driver.execute_script("""
+            return Array.from(document.querySelectorAll('nav ul > li')).map(function(li){
+                return (li.querySelector('div div')||li).innerText.trim().split('\\n')[0].toUpperCase();
+            });
+        """) or []
+        ok = "RATES" in items
+        jc(driver, img)
+        time.sleep(1)
+        return ok, items
+    except Exception:
+        return False, []
+
+
+def _saltar_a_producto_via_lupa(driver, codigo):
+    """True si encontró `codigo` (match exacto, nunca por posición) en el
+    popover de la lupa, lo abrió y confirmó contexto de producto."""
+    try:
+        lupa = wait(driver, "#searchWrapper li:nth-of-type(2) button", t=4)
+        jc(driver, lupa)
+        time.sleep(2 * VELOCIDAD)
+    except Exception:
+        return False
+
+    cod_upper = (codigo or "").strip().upper()
+
+    def _click_si_esta():
+        return driver.execute_script("""
+            var cod = arguments[0];
+            var dialogs = document.querySelectorAll('tp-dialog');
+            if (!dialogs.length) return null;
+            var dlg = dialogs.length > 1 ? dialogs[1] : dialogs[0];
+            var rows = Array.from(dlg.querySelectorAll('tr')).slice(1);
+            for (var tr of rows){
+                var celda = tr.querySelector('td.tpcol-optioncode');
+                if (celda && celda.innerText.trim().toUpperCase() === cod){
+                    celda.click();
+                    return celda.innerText.trim();
+                }
+            }
+            return null;
+        """, cod_upper)
+
+    def _scroll_popover():
+        return bool(driver.execute_script("""
+            var dialogs = document.querySelectorAll('tp-dialog');
+            if (!dialogs.length) return false;
+            var dlg = dialogs.length > 1 ? dialogs[1] : dialogs[0];
+            var fila = dlg.querySelector('tr');
+            if (!fila) return false;
+            var cur = fila.closest('table');
+            while (cur && cur !== dlg){
+                if (cur.scrollHeight > cur.clientHeight + 5){
+                    var antes = cur.scrollTop;
+                    cur.scrollTop = cur.scrollTop + cur.clientHeight;
+                    return cur.scrollTop > antes;
+                }
+                cur = cur.parentElement;
+            }
+            return false;
+        """))
+
+    clicked = _click_si_esta()
+    intentos = 0
+    while not clicked and intentos < 40:
+        if not _scroll_popover():
+            break
+        time.sleep(0.4 * VELOCIDAD)
+        clicked = _click_si_esta()
+        intentos += 1
+    if not clicked:
+        return False
+
+    time.sleep(4 * VELOCIDAD)
+    ok_ctx, _ = _en_contexto_producto(driver)
+    return ok_ctx
+
+
+def _abrir_primero_de_grupo(driver, supplier, codigo):
+    """Abre el primer código de un grupo de 2+ del mismo SUPPLIER buscando
+    SOLO por proveedor (sin location, service type ni código): deja en
+    pantalla la lista más amplia posible para que los códigos siguientes
+    —aunque sean de otra location— estén disponibles en el popover de la
+    lupa. Escrollea de a poco buscando el código exacto."""
+    codigo = str(codigo).strip()
+    supplier = str(supplier).strip()
+    print(f"\n  📦 Buscando (grupo, sólo por proveedor): {supplier} → {codigo}")
+    _completar_filtros_busqueda(driver, "", supplier, "", "")
+    cod_upper = codigo.upper()
+
+    def _click_si_esta():
+        return driver.execute_script("""
+            var cod = arguments[0];
+            var rows = Array.from(document.querySelectorAll('table tbody tr'));
+            for (var tr of rows){
+                var tds = Array.from(tr.querySelectorAll('td'));
+                var hasCod = tds.some(function(td){
+                    return td.children.length===0 && td.innerText.trim().toUpperCase()===cod;
+                });
+                if (hasCod){
+                    var target = tds.length > 4 ? tds[4] : tds[tds.length-1];
+                    target.click();
+                    return target.innerText.trim().slice(0,50) || 'clicked';
+                }
+            }
+            return null;
+        """, cod_upper)
+
+    clicked = _click_si_esta()
+    intentos = 0
+    while not clicked and intentos < 40:
+        if not _hacer_scroll_resultados(driver):
+            break
+        time.sleep(0.4 * VELOCIDAD)
+        clicked = _click_si_esta()
+        intentos += 1
+    if not clicked:
+        ss(driver, f"ps_grupo_sin_resultado_{codigo[:10]}")
+        raise ProductoNoEncontrado(
+            f"Producto no encontrado en la lista del grupo (supplier={supplier!r} "
+            f"codigo={codigo!r})")
+
+    time.sleep(6 * VELOCIDAD)
+    ok_ctx, menu_items = _en_contexto_producto(driver)
+    if not ok_ctx:
+        ss(driver, f"ps_grupo_contexto_incorrecto_{codigo[:10]}")
+        raise ProductoNoEncontrado(
+            f"Click en resultado OK pero no quedó en contexto de producto "
+            f"(menú visto: {menu_items}) — codigo={codigo!r}")
+
+
+def ordenar_cola_por_supplier(cola):
+    """Agrupa los items del mismo SUPPLIER (aunque sean de distinta
+    location) uno a continuación del otro, respetando el orden de primera
+    aparición — así se encadenan con la lupa. Dentro de cada supplier se
+    conserva el orden original."""
+    orden, grupos = [], {}
+    for it in cola:
+        k = it["supplier"].strip().upper()
+        if k not in grupos:
+            grupos[k] = []
+            orden.append(k)
+        grupos[k].append(it)
+    return [it for k in orden for it in grupos[k]]
+
+
+def abrir_producto(driver, item, es_primero_de_grupo, grupo_multiple, estado_ok):
+    """Abre `item` con el camino más corto disponible. `estado_ok` indica
+    si el driver quedó parado en un producto abierto por el item anterior
+    del mismo supplier (condición para usar la lupa)."""
+    cod = item["codigo"]
+    if es_primero_de_grupo and grupo_multiple:
+        try:
+            _abrir_primero_de_grupo(driver, item["supplier"], cod)
+            return
+        except ProductoNoEncontrado as e:
+            print(f"    ⚠ {e} — probando búsqueda completa")
+    elif estado_ok and _saltar_a_producto_via_lupa(driver, cod):
+        return
+    buscar_producto(driver, item["location"], item["supplier"], cod,
+                    service_type=item["service_type"])
+
+
+# Cada cuántos códigos leídos se guarda lo pendiente en el Sheet (además
+# de al terminar cada supplier y al final): así se ve el avance y un
+# corte (abortar, caída de Chrome/red) no pierde lo ya leído.
+FLUSH_CADA = 10
+
+
 def main():
     modo = MODO
     validar_config(modo)
@@ -1955,26 +2146,66 @@ def main():
     ws_esp = obtener_hoja(sh, HOJA_ESPECIFICOS, COLS_TARIFAS)
     ws_cmp = obtener_hoja(sh, HOJA_COMPARACION, COLS_COMPARACION)
 
-    esp_registrados = leer_filas(ws_esp, normalizar_fila_tarifa)
-    gen_archivados = leer_filas(ws_gen, normalizar_fila_tarifa)
-    if modo == "ACTUALIZAR" and not esp_registrados and not ACTUALIZAR_SELECCION:
+    esp_rows = leer_filas(ws_esp, normalizar_fila_tarifa)
+    gen_rows = leer_filas(ws_gen, normalizar_fila_tarifa)
+    cmp_rows = leer_filas(ws_cmp)
+    if modo == "ACTUALIZAR" and not esp_rows and not ACTUALIZAR_SELECCION:
         print(f"No hay específicos registrados en la pestaña {HOJA_ESPECIFICOS} — "
               f"corré antes un modo ESPECIFICO o COMPLETO.")
         return
 
-    plan = armar_plan(modo, esp_registrados, gen_archivados)
+    plan = armar_plan(modo, esp_rows, gen_rows)
     if not plan:
         print("Nada para actualizar con esa selección.")
         return
-    incluir_generico = any(p[1] for p in plan)
-    incluir_especificos = any(p[2] for p in plan)
+
+    # ── Guardado progresivo ──
+    pend_filas, pend_codigos = [], set()   # (sup, loc, code, es_generico) leídos OK y no guardados
+    locs_pend = set()
+    ahora_locs = set(LOCATIONS)
+
+    def guardar(limpiar_grupo=None, forzar_locs=()):
+        """Vuelca al Sheet lo leído desde el último guardado y recalcula
+        la comparación de las locations afectadas. `limpiar_grupo` =
+        (supplier, location, es_generico, codigos_vigentes): cuando un
+        supplier se leyó completo y sin fallas, borra sus códigos
+        archivados que ya no existen en Tourplan."""
+        nonlocal pend_filas, pend_codigos, locs_pend, cmp_rows
+        cambios = {"gen": False, "esp": False}
+        for es_gen, destino, hoja, clave in ((True, gen_rows, ws_gen, "gen"),
+                                              (False, esp_rows, ws_esp, "esp")):
+            nuevas = [f for f in pend_filas if bool(f["ES_GENERICO"]) == es_gen]
+            codigos = {k[:3] for k in pend_codigos if k[3] == es_gen}
+            nuevo = destino
+            if codigos:
+                nuevo = mezclar_tarifas(nuevo, nuevas, set(), codigos)
+            if limpiar_grupo and limpiar_grupo[2] == es_gen:
+                sup, loc, _, vigentes = limpiar_grupo
+                nuevo = [f for f in nuevo
+                         if not (f["SUPPLIER"] == sup and f["LOCATION"] == loc
+                                 and f["PRODUCT_CODE"] not in vigentes)]
+            if nuevo is not destino and (codigos or len(nuevo) != len(destino)):
+                destino[:] = nuevo
+                reescribir_hoja(hoja, COLS_TARIFAS, destino)
+                cambios[clave] = True
+                print(f"💾 {hoja.title}: {len(destino)} filas guardadas")
+        locs = set(locs_pend) | set(forzar_locs)
+        if locs and (cambios["gen"] or cambios["esp"] or forzar_locs):
+            comp = recalcular_comparacion(gen_rows, esp_rows, locs)
+            ahora = datetime.now().isoformat(timespec="seconds")
+            for f in comp:
+                f["ACTUALIZADO"] = ahora
+            cmp_rows = [f for f in cmp_rows if str(f.get("LOCATION", "")) not in locs] + comp
+            reescribir_hoja(ws_cmp, COLS_COMPARACION, cmp_rows, formato_pct_col="DIFERENCIA_PCT")
+            print(f"✅ {HOJA_COMPARACION}: {len(comp)} filas recalculadas ({', '.join(sorted(locs))})")
+        pend_filas, pend_codigos, locs_pend = [], set(), set()
 
     driver = crear_driver()
-    filas_salida, ok_codigos, grupos_fallidos = [], set(), set()
-    cola, abortado = [], False
+    cola, abortado, fallo_fatal = [], False, False
+    grupos_fallidos, procesados_ok = set(), 0
     try:
         login(driver)
-        cola, pedidos = [], set()
+        pedidos = set()
         for comps, ig, ie in plan:
             cola += descubrir_cola(driver, comps, ig, ie)
             for c in comps:
@@ -1986,20 +2217,37 @@ def main():
         for sup, loc in sorted(pedidos - encontrados):
             print(f"⚠ Sin códigos para {sup!r} en {loc} — ¿código/nombre correcto y "
                   f"cargado en esa location? No se modifica nada de ese supplier.")
+        cola = ordenar_cola_por_supplier(cola)
         if LIMIT_PRUEBA:
             print(f"\n⚠ LIMIT_PRUEBA={LIMIT_PRUEBA}: sólo los primeros {LIMIT_PRUEBA} "
-                  f"de {len(cola)} códigos; no se reemplazan archivos completos.")
+                  f"de {len(cola)} códigos; no se borran códigos archivados.")
             cola = cola[:LIMIT_PRUEBA]
             grupos_fallidos.update((i["supplier"], i["location"]) for i in cola)
         print(f"Cola de trabajo: {len(cola)} códigos a leer.")
 
+        vigentes_por_grupo, es_gen_grupo, restantes = {}, {}, {}
+        for it in cola:
+            g = (it["supplier"], it["location"])
+            vigentes_por_grupo.setdefault(g, set()).add(it["codigo"])
+            es_gen_grupo[g] = it["es_generico"]
+            restantes[g] = restantes.get(g, 0) + 1
+        cant_por_supplier = {}
+        for it in cola:
+            k = it["supplier"].strip().upper()
+            cant_por_supplier[k] = cant_por_supplier.get(k, 0) + 1
+
+        supplier_anterior, pos_en_supplier, estado_ok = None, 0, False
         for i, item in enumerate(cola):
             chequear_abort()
-            clave_g = (item["supplier"], item["location"])
+            g = (item["supplier"], item["location"])
+            k_sup = item["supplier"].strip().upper()
+            if k_sup != supplier_anterior:
+                supplier_anterior, pos_en_supplier, estado_ok = k_sup, 0, False
             print(f"\n[{i+1}/{len(cola)}] {item['location']}/{item['supplier']}/{item['codigo']}")
             try:
-                buscar_producto(driver, item["location"], item["supplier"],
-                                item["codigo"], service_type=item["service_type"])
+                abrir_producto(driver, item, pos_en_supplier == 0,
+                               cant_por_supplier[k_sup] > 1, estado_ok)
+                estado_ok = True
                 tarifas = leer_tarifa_vigente_componente(driver, item["codigo"],
                                                          price_code=item["price_code"])
                 if not tarifas:
@@ -2008,7 +2256,7 @@ def main():
                     if t["moneda"] not in ("ARS", "USD"):
                         print(f"    ⚠ Moneda inesperada {t['moneda']!r} en {item['codigo']} "
                               f"(pax {t['pax_desde']}-{t['pax_hasta']}) — no se convierte a USD")
-                    filas_salida.append({
+                    pend_filas.append({
                         "SUPPLIER": item["supplier"], "PRODUCT_CODE": item["codigo"],
                         "ES_GENERICO": item["es_generico"], "GENERICO": item["generico"],
                         "DESCRIPCION": item.get("descripcion", ""),
@@ -2021,19 +2269,37 @@ def main():
                         "LOCATION": item["location"],
                         "TIMESTAMP": datetime.now().isoformat(timespec="seconds"),
                     })
-                ok_codigos.add(clave_g + (item["codigo"],))
+                pend_codigos.add(g + (item["codigo"], item["es_generico"]))
+                locs_pend.add(item["location"])
+                procesados_ok += 1
             except AbortadoPorUsuario:
                 raise
             except ProductoNoEncontrado as e:
                 print(f"    ❌ {e}")
-                grupos_fallidos.add(clave_g)
+                grupos_fallidos.add(g)
+                estado_ok = False
             except Exception as e:
                 print(f"    ❌ Error inesperado en {item['codigo']}: {e}")
                 ss(driver, f"error_{item['codigo'][:10]}")
-                grupos_fallidos.add(clave_g)
+                grupos_fallidos.add(g)
+                estado_ok = False
+            pos_en_supplier += 1
+
+            restantes[g] -= 1
+            if restantes[g] == 0 and g not in grupos_fallidos:
+                guardar((g[0], g[1], es_gen_grupo[g], vigentes_por_grupo[g]))
+            elif restantes[g] == 0:
+                print(f"⚠ {g[0]}/{g[1]}: lectura incompleta — sólo se pisaron los códigos leídos OK.")
+                guardar()
+            elif len(pend_codigos) >= FLUSH_CADA:
+                guardar()
     except AbortadoPorUsuario:
         abortado = True
-        print("\n⏸️ Abortado por el usuario — no se escribe nada en el Sheet.")
+        print("\n⏸️ Abortado por el usuario — se guarda lo ya leído.")
+    except Exception:
+        fallo_fatal = True
+        print("\n❌ Error inesperado, se corta la corrida (se guarda lo ya leído):")
+        traceback.print_exc()
     finally:
         try:
             logout(driver)
@@ -2041,43 +2307,17 @@ def main():
             print(f"  ⚠ logout falló: {e}")
         driver.quit()
 
-    if abortado:
-        sys.exit(ABORT_EXIT_CODE)
+    # Guardado final: lo pendiente + recalcular toda location tocada.
+    locs_tocadas = {i["location"] for i in cola} | ahora_locs
+    try:
+        guardar(forzar_locs=locs_tocadas)
+    except Exception:
+        print("❌ No pude guardar lo pendiente en el Sheet:")
+        traceback.print_exc()
+        sys.exit(1)
 
-    # ── Guardar en el Sheet y recalcular la comparación ──
-    grupos_cola = {(i["supplier"], i["location"]) for i in cola}
-    reemplazar_grupos = grupos_cola - grupos_fallidos
-    reemplazar_codigos = {k for k in ok_codigos if (k[0], k[1]) in grupos_fallidos}
-    for g in sorted(grupos_fallidos & grupos_cola):
-        print(f"⚠ {g[0]}/{g[1]}: lectura incompleta — sólo se pisan los códigos leídos OK.")
-
-    nuevas_gen = [f for f in filas_salida if f["ES_GENERICO"]]
-    nuevas_esp = [f for f in filas_salida if not f["ES_GENERICO"]]
-
-    gen_rows = gen_archivados
-    esp_rows = esp_registrados
-    if incluir_generico:
-        gen_rows = mezclar_tarifas(gen_rows, nuevas_gen, reemplazar_grupos, reemplazar_codigos)
-        reescribir_hoja(ws_gen, COLS_TARIFAS, gen_rows)
-        print(f"💾 {HOJA_GENERICOS}: {len(gen_rows)} filas ({len(nuevas_gen)} nuevas/actualizadas)")
-    if incluir_especificos:
-        esp_rows = mezclar_tarifas(esp_rows, nuevas_esp, reemplazar_grupos, reemplazar_codigos)
-        reescribir_hoja(ws_esp, COLS_TARIFAS, esp_rows)
-        print(f"💾 {HOJA_ESPECIFICOS}: {len(esp_rows)} filas ({len(nuevas_esp)} nuevas/actualizadas)")
-
-    locs_tocadas = {i["location"] for i in cola} | set(LOCATIONS)
-    print("\n🔄 Recalculando comparación genérico vs específico...")
-    comparacion = recalcular_comparacion(gen_rows, esp_rows, locs_tocadas)
-    ahora = datetime.now().isoformat(timespec="seconds")
-    for f in comparacion:
-        f["ACTUALIZADO"] = ahora
-    previas = leer_filas(ws_cmp)
-    resto = [f for f in previas if str(f.get("LOCATION", "")) not in locs_tocadas]
-    reescribir_hoja(ws_cmp, COLS_COMPARACION, resto + comparacion, formato_pct_col="DIFERENCIA_PCT")
-    print(f"✅ {HOJA_COMPARACION}: {len(comparacion)} filas recalculadas "
-          f"({', '.join(sorted(locs_tocadas))})")
-
-    con_flags = [f for f in comparacion if f["FLAGS"]]
+    comparacion = [f for f in cmp_rows if str(f.get("LOCATION", "")) in locs_tocadas]
+    con_flags = [f for f in comparacion if f.get("FLAGS")]
     if con_flags:
         conteo = {}
         for f in con_flags:
@@ -2087,6 +2327,12 @@ def main():
             print(f"    {flag}: {n}")
     elif not comparacion:
         print("ℹ️ No hay específicos archivados en esas locations todavía — nada que comparar.")
+    print(f"\nCódigos leídos OK en esta corrida: {procesados_ok}/{len(cola)}")
+
+    if abortado:
+        sys.exit(ABORT_EXIT_CODE)
+    if fallo_fatal:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
