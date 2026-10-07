@@ -140,18 +140,11 @@ def render_configuracion():
         )
 
         headless = st.checkbox("Correr Chrome sin ventana (headless)", value=bool(cfg.get("headless", False)))
-        credenciales = st.file_uploader(
-            "Credenciales de Google (credentials.json, OAuth de escritorio)", type="json",
-            help="Hace falta una sola vez por PC para que la app pueda escribir en el Sheet. "
-                 "Se guarda en tu carpeta de usuario, fuera del repo. La primera corrida abre "
-                 "el navegador para dar permiso.")
         if os.path.exists(user_config.CREDENTIALS_PATH):
-            st.caption("✅ Ya hay un credentials.json guardado en esta PC (subir otro lo reemplaza).")
+            st.caption(f"✅ credentials.json de Google encontrado en {user_config.CREDENTIALS_PATH}")
+        else:
+            st.caption(f"⚠️ Falta el credentials.json de Google: copialo a {user_config.CREDENTIALS_PATH}")
         if st.form_submit_button("Guardar"):
-            if credenciales is not None:
-                os.makedirs(user_config.CONFIG_DIR, exist_ok=True)
-                with open(user_config.CREDENTIALS_PATH, "wb") as f:
-                    f.write(credenciales.getvalue())
             urls = dict(cfg.get("sheet_urls", {}))
             urls[SCRIPT_KEY] = sheet_url.strip()
             cfg.update({"tp_usuario": tp_usuario.strip(), "tp_password": tp_password,

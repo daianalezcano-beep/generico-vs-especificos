@@ -20,9 +20,10 @@ diseño, hallazgos de validación y pendientes).
    `~/.tourplan-nx-app/config.json`, fuera del repo): usuario y password de
    Tourplan, URL de Tourplan (producción por defecto), la URL del Google Sheet
    de salida de cada genérico (TRFPO, GUIAPO, PEAPO a la vista, el resto en un
-   desplegable), el modo headless y el `credentials.json` de Google (OAuth de
-   escritorio). La primera corrida abre el navegador para dar permiso a
-   Google.
+   desplegable), y el modo headless. El `credentials.json` de Google (OAuth de escritorio)
+   no se carga desde la app: se copia a mano a
+   `~/.tourplan-nx-app/credentials.json` (la pantalla avisa si falta). La
+   primera corrida abre el navegador para dar permiso a Google.
 4. **▶ Comparación**:
    - **Modo**: *Solo genérico* (extrae y archiva el genérico), *Solo
      específico* (extrae específicos y los compara contra el genérico
