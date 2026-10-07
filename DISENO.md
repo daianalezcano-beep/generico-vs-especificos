@@ -18,7 +18,7 @@ comparación por pax break/vehículo con 6HOUS1 y 6BAVA1, y peajes PEAPO
 **Pendiente**: GUIAPO y demás genéricos sin validar (Price Code, service type
 y criterio de match propios); búsqueda de específico por nombre; bandera para
 genérico en 0 y para superposición parcial de períodos; botón de "recalcular
-comparación" sin leer Tourplan; autocompletar proveedor; Sheet de GUIAPJ/GUIAPR.
+comparación" sin leer Tourplan; autocompletar proveedor.
 
 **Nota sobre las secciones siguientes**: describen la construcción original
 con scripts sueltos para Google Colab (`extraccion_tarifas_vigentes.py`,
@@ -870,7 +870,8 @@ Decisiones de implementación:
   Cambio sólo en la copia de `construir_comparacion_gap` de este script.
 - **Un Google Sheet por genérico (servicio)**: en ⚙️ Configuración se carga la
   URL de salida de cada genérico (TRFPO, GUIAPO, PEAPO a la vista; el resto del
-  catálogo en un desplegable) más una URL general de respaldo. Cada Sheet guarda
+  catálogo en un desplegable) más una URL general de respaldo. Decisión de la usuaria: cada genérico
+  (incluidos GUIAPJ y GUIAPR) tiene su propio Sheet, no se comparten. Cada Sheet guarda
   las pestañas GENERICOS / ESPECIFICOS / COMPARACION sólo de ese genérico, así
   los comparativos quedan agrupados por servicio. El genérico se elige en todos
   los modos (también en "Solo específico": define el Sheet, las locations

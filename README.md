@@ -72,7 +72,7 @@ error no se pierde lo ya leído.
   por nombre (sólo por código está confirmada).
 - **Pendientes**: bandera para genérico en 0 y para superposición parcial de
   períodos; botón para recalcular la comparación sin leer Tourplan; autocompletar
-  el proveedor consultando Tourplan; definir el Sheet de GUIAPJ/GUIAPR. Detalle
+  el proveedor consultando Tourplan;. Detalle
   en `DISENO.md`.
 
 ## Historial
