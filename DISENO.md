@@ -832,3 +832,57 @@ del de Auto, y un código con sufijo V9 queda excluido con la bandera
 esperada sin comparación forzada. No corrido todavía contra Tourplan
 real con `MODO=SOLO_ESPECIFICOS` completo (sólo verificado con datos
 sintéticos reproduciendo el caso reportado).
+
+## App local y script único (`app/` + `variacion_generico_especifico.py`)
+
+Pedido de la usuaria: pasar la herramienta a una app local (Streamlit,
+mismo patrón que Drive-TP-NX-App: variables de entorno, botones
+"run app"/"actualizar app") con **un solo script**, sin Sheet de entrada.
+Configuración elegida en la interfaz (`app/app.py`):
+
+1. **Modo**: `GENERICO` (extrae y archiva el genérico), `ESPECIFICO`
+   (extrae específicos y compara contra el genérico archivado) o
+   `COMPLETO`. Además el botón "Actualizar comparación" (`ACTUALIZAR`)
+   re-extrae todos los específicos ya registrados.
+2. **Proveedor**: genérico = desplegable del catálogo
+   `config/genericos.csv` (cada genérico habilita sólo las locations
+   donde está cargado; selección múltiple porque hay locations que se
+   analizan en conjunto por cercanía). Específico = texto libre
+   (código o nombre, separados por coma) + locations.
+3. **Rango de fechas** (opcional; sin rango = período vigente hoy).
+
+**Almacén = Google Sheet de salida** (pestañas `GENERICOS`,
+`ESPECIFICOS`, `COMPARACION`, creadas si no existen). El genérico se
+extrae una vez y queda archivado; cada específico que se suma se
+compara contra él. **La comparación es instantánea**: al final de toda
+corrida (cualquier modo) se recalcula `COMPARACION` para todas las
+locations tocadas, con todos los específicos archivados contra todos
+los genéricos archivados — también cuando sólo cambió el genérico, sin
+volver a scrapear los específicos.
+
+Decisiones de implementación:
+- Los helpers de Tourplan y `construir_comparacion_gap` son una copia de
+  `extraccion_tarifas_vigentes.py` (que sigue intacto como versión Colab).
+  Un fix en una hay que replicarlo en la otra.
+- Las filas del Sheet se leen con `UNFORMATTED_VALUE` y se normalizan de
+  tipo (pax enteros, tarifas float, `ES_GENERICO` bool) — no depende del
+  formato regional del Sheet.
+- Si una corrida no pudo leer algún código de un supplier, o se usó
+  `TOURPLAN_LIMIT_PRUEBA`, ese supplier no reemplaza su archivo completo:
+  sólo se pisan los códigos leídos OK. Abortar desde la app no escribe nada.
+- El Sheet se abre antes de loguear en Tourplan (un error de URL/credenciales
+  no gasta una licencia) y se hace logout al terminar.
+- En modo `ESPECIFICO` no hay genérico elegido: la comparación busca por
+  prefijo de código entre todos los genéricos archivados de la location
+  (`COLISION_REVISAR` si hay más de un candidato).
+
+**Sin validar contra Tourplan real desde esta app**: sólo se probó la
+lógica de guardado/mezcla/comparación con datos sintéticos (caso AEEZ19).
+Pendientes conocidos: búsqueda de específico por nombre (no sólo código);
+Price Code distinto de `TR` para GUIAPO/PEAPO/BOXLPO/etc.; Service Type de
+los demás genéricos (BOXLPO puede ser GA o ML — se deja vacío y se busca
+sólo por Location + Supplier); y la tabla de vehículo/pax es de transporte,
+así que para genéricos que no son TRFPO la comparación va a traer banderas
+(`SUFIJO_VEHICULO_DESCONOCIDO_*`, `SIN_BASE_VEHICULO_PAX_*`) hasta definir
+su propio criterio de match. Autocompletar el proveedor consultando
+Tourplan en vivo se dejó para después.

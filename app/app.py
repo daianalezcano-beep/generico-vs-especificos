@@ -183,6 +183,15 @@ def render_principal():
         desde = c1.date_input("Desde", value=date.today(), format="DD/MM/YYYY", disabled=state["running"])
         hasta = c2.date_input("Hasta", value=date.today(), format="DD/MM/YYYY", disabled=state["running"])
 
+    with st.expander("Opciones avanzadas"):
+        price_code = st.text_input(
+            "Price Code a leer en RATES", value="TR", disabled=state["running"],
+            help="Confirmado sólo para TRFPO (TR). Para otros genéricos, si no lee bien "
+                 "los valores, probá con el Price Code que corresponda (o ALL).")
+        tipo_cambio = st.text_input(
+            "Tipo de cambio ARS→USD (opcional)", value="", disabled=state["running"],
+            help="Sin esto, las filas cargadas en ARS quedan sin TARIFA_USD y no se comparan.")
+
     # Validación mínima para habilitar "Ejecutar"
     if modo == "GENERICO":
         completo = bool(generico and locations_gen)
@@ -219,6 +228,8 @@ def render_principal():
         "TOURPLAN_SHEET_URL": sheet_url,
         "TOURPLAN_FECHA_DESDE": _fmt(desde),
         "TOURPLAN_FECHA_HASTA": _fmt(hasta),
+        "TOURPLAN_PRICE_CODE": price_code.strip(),
+        "TOURPLAN_TIPO_CAMBIO": tipo_cambio.strip(),
     }
     if run_clicked:
         _lanzar(state, {

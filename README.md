@@ -11,6 +11,18 @@ transportistas) y `DISENO.md` para las decisiones de diseño, la
 generalización a PEAPO/GUIAPO y los hallazgos de la validación contra
 datos reales.
 
+## App local (Streamlit)
+
+`app/` contiene la interfaz: **doble clic en `app/run_app.bat`** para abrirla
+y en `app/actualizar_app.bat` para traer cambios nuevos (git pull). Corre
+`variacion_generico_especifico.py` con modo (genérico/específico/completo),
+supplier y locations (selección múltiple), y rango de fechas; guarda todo en
+un Google Sheet (pestañas GENERICOS, ESPECIFICOS, COMPARACION) y recalcula la
+comparación en cada corrida. Catálogo de genéricos en `config/genericos.csv`.
+Usuario/password de Tourplan y URL del Sheet se cargan en ⚙️ Configuración
+(se guardan fuera del repo). Detalles y pendientes en `DISENO.md`
+("App local y script único"). Sin validar todavía contra Tourplan real.
+
 ## Estado actual
 
 - ✅ **Fase 2 — motor de matching** (`matching_engine.py`): longest-prefix-match
