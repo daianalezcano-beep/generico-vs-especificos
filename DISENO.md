@@ -870,12 +870,14 @@ Decisiones de implementación:
 - Las filas del Sheet se leen con `UNFORMATTED_VALUE` y se normalizan de
   tipo (pax enteros, tarifas float, `ES_GENERICO` bool) — no depende del
   formato regional del Sheet.
-- **Guardado progresivo**: se vuelca al Sheet cada 10 códigos leídos, al
-  terminar cada supplier y al final (también si se aborta o hay un error),
-  recalculando la comparación en cada guardado. Cada código leído OK
-  reemplaza sus filas archivadas; los códigos archivados que ya no existen
-  en Tourplan sólo se borran si el supplier se leyó completo y sin fallas
-  (no con `TOURPLAN_LIMIT_PRUEBA` ni si falló algún código).
+- **Guardado constante**: las tarifas de cada código se escriben en el
+  Sheet apenas se leen (se borran las filas archivadas de ese código y se
+  agregan las nuevas, 1–2 llamadas a la API, sin releer el Sheet). La
+  comparación —derivada— se recalcula cada 10 códigos, al terminar cada
+  supplier y al final (también si se aborta o hay un error). Los códigos
+  archivados que ya no existen en Tourplan sólo se borran si el supplier se
+  leyó completo y sin fallas (no con `TOURPLAN_LIMIT_PRUEBA` ni si falló
+  algún código).
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la
