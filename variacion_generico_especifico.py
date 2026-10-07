@@ -1688,7 +1688,12 @@ def construir_comparacion_gap(filas):
                 flags.append("COLISION_REVISAR")
 
             vehiculo, sufijo = _vehiculo_por_sufijo(fe["PRODUCT_CODE"])
-            if vehiculo == "NO_VALORIZADO":
+            # Código específico IDÉNTICO al genérico (sin sufijo de vehículo
+            # — ej. peajes PJ: AE, CX, D120): comparten los mismos pax breaks,
+            # así que se compara tramo contra tramo con el rango de pax del
+            # propio específico, sin pasar por la tabla de vehículos.
+            sin_sufijo = mejor is not None and mejor == fe["PRODUCT_CODE"]
+            if vehiculo == "NO_VALORIZADO" and not sin_sufijo:
                 # Vehículo real (ej. V9/Van 9 pax) que TRFPO no valoriza
                 # como tramo propio — no hay ningún tramo de TRFPO
                 # contra el cual comparar, así que se excluye en vez de
@@ -1715,7 +1720,9 @@ def construir_comparacion_gap(filas):
             # realmente le corresponde a ese vehículo (bug real
             # encontrado por la usuaria, ver DISENO.md).
             pax_desde_cmp, pax_hasta_cmp = fe["PAX_DESDE"], fe["PAX_HASTA"]
-            if vehiculo is None:
+            if sin_sufijo:
+                pass  # usa el rango de pax del propio específico
+            elif vehiculo is None:
                 flags.append(f"SUFIJO_VEHICULO_DESCONOCIDO_{sufijo}")
             else:
                 categoria, guia = _clasificar_categoria_guia_especifico(

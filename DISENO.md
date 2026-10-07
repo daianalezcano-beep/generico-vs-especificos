@@ -885,6 +885,12 @@ Decisiones de implementación:
   Drive-TP-NX-App) y recién después se usa la lupa. Además el popover de la
   lupa se busca en el último diálogo VISIBLE (Angular deja en el DOM los
   diálogos ya cerrados, así que no se puede asumir un índice fijo).
+- **Códigos sin sufijo de vehículo (peajes PJ)**: cuando el código del
+  específico es IDÉNTICO al del genérico (ej. `AE`, `CX`, `D120`), comparten
+  los mismos pax breaks: se compara tramo contra tramo con el rango de pax del
+  propio específico, sin pasar por la tabla de vehículos y sin la bandera
+  `SUFIJO_VEHICULO_DESCONOCIDO_*` (confirmado por la usuaria con PEAPO en BUE).
+  Cambio sólo en la copia de `construir_comparacion_gap` de este script.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la
