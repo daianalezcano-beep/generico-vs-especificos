@@ -1350,6 +1350,12 @@ def logout(driver):
         print(f"  ⚠ Error en logout: {e}")
 
 
+# Monedas que ya están en dólares y se comparan directo, sin conversión: USD
+# y BLU (código de Tourplan para tarifas en dólares a tipo de cambio "blue",
+# ej. Viabus — confirmado por la usuaria).
+MONEDAS_USD = ("USD", "BLU")
+
+
 def convertir_a_usd(tarifa, moneda, tipo_cambio):
     """None si no se puede convertir con confianza: falta la tarifa,
     la moneda vino vacía (columna CURRENCY no encontrada), la moneda no
@@ -1358,7 +1364,7 @@ def convertir_a_usd(tarifa, moneda, tipo_cambio):
     valor."""
     if tarifa is None or not moneda:
         return None
-    if moneda == "USD":
+    if moneda in MONEDAS_USD:
         return round(tarifa, 2)
     if moneda == "ARS":
         return round(tarifa / tipo_cambio, 2) if tipo_cambio else None
@@ -1397,6 +1403,7 @@ COLS_GAP = [
 SUFIJO_VEHICULO = {
     "AU": "Auto",
     "MV": "H1/VITO",
+    "12": "Hi Ace/Van 12 pax",
     "15": "Sprinter 15 pax",
     "19": "Sprinter 19 pax",
     "24": "Minibus",
@@ -1404,6 +1411,11 @@ SUFIJO_VEHICULO = {
     "42": "Bus",
 }
 SUFIJOS_VEHICULO_NO_VALORIZADOS_TRFPO = {"V9"}
+# Vehículos de los específicos que TRFPO no carga como tal: se comparan contra
+# el tramo de este otro vehículo SI la location/categoría lo tiene en la tabla
+# de bases (en BUE "Sprinter 15 pax" sólo existe en excursiones y cruceros-
+# excursión; en traslados no hay equivalente y esas filas no se comparan).
+VEHICULO_EQUIVALENTE_TRFPO = {"Hi Ace/Van 12 pax": "Sprinter 15 pax"}
 
 # LOCATION/CATEGORIA/VEHICULO/GUIA -> rango de pax REAL de ese vehículo
 # (no el PAX_DESDE/HASTA que reportó el específico en su propia
@@ -1608,6 +1620,9 @@ def _pax_esperado_vehiculo(location, categoria, vehiculo, guia):
                       if r["location"] == location and r["categoria"] == categoria
                       and r["vehiculo"] == vehiculo]
     if not candidatas:
+        equivalente = VEHICULO_EQUIVALENTE_TRFPO.get(vehiculo)
+        if equivalente and equivalente != vehiculo:
+            return _pax_esperado_vehiculo(location, categoria, equivalente, guia)
         return None
     r = candidatas[0]
     return r["pax_desde"], r["pax_hasta"]
@@ -1622,15 +1637,22 @@ def _pax_overlap(desde1, hasta1, desde2, hasta2):
 
 
 def _mejor_prefijo_generico(codigo, codigos_generico_desc):
-    """Longest-prefix-match código específico → código genérico. Mismo
-    algoritmo que matching_engine.py::mejor_prefijo_trfpo (Fase 2) —
-    nunca dependió de nada específico de TRFPO (es prefijo de string
-    puro), así que sirve igual para cualquier otra relación genérico/
-    específico (PEAPO, GUIAPO, la que sea) sin cambios."""
+    """Longest-prefix-match código específico → código genérico, con
+    desempate por sufijo: si varios códigos genéricos son prefijo (ej. HRD42
+    → HRD y HRD4), se prefiere el más largo CUYO RESTO sea un sufijo de
+    vehículo conocido (HRD42 → HRD + "42"; HRD442 → HRD4 + "42"; un código
+    idéntico al genérico, como AE, deja resto vacío y también vale). Sólo si
+    ninguno cierra así se cae al más largo, como antes. Devuelve
+    (mejor, candidatos); `candidatos` son los que cerraron por sufijo (o todos
+    si ninguno), para que COLISION_REVISAR quede sólo en las ambigüedades que
+    no se resolvieron."""
     candidatos = [c for c in codigos_generico_desc if codigo.startswith(c)]
     if not candidatos:
         return None, []
-    return max(candidatos, key=len), candidatos
+    validos_resto = set(SUFIJO_VEHICULO) | set(SUFIJOS_VEHICULO_NO_VALORIZADOS_TRFPO) | {""}
+    con_sufijo = [c for c in candidatos if codigo[len(c):].upper() in validos_resto]
+    elegidos = con_sufijo or candidatos
+    return max(elegidos, key=len), elegidos
 
 
 def _dias_superposicion(desde1, hasta1, desde2, hasta2):
@@ -1734,7 +1756,13 @@ def construir_comparacion_gap(filas):
                     fe["PRODUCT_CODE"], fe.get("DESCRIPCION", ""))
                 esperado = _pax_esperado_vehiculo(location, categoria, vehiculo, guia)
                 if esperado is None:
-                    flags.append(f"SIN_BASE_VEHICULO_PAX_{categoria}_{vehiculo}".replace(" ", "_"))
+                    # TRFPO no tiene ese vehículo para esta categoría: no hay
+                    # tramo contra el cual comparar (no se fuerza uno).
+                    flags.append(f"SIN_EQUIVALENTE_TRFPO_{categoria}_{vehiculo}".replace(" ", "_"))
+                    salida.append({**base, "CODIGO_GENERICO": mejor, "TARIFA_GENERICO_USD": None,
+                                   "DIFERENCIA_USD": None, "DIFERENCIA_PCT": None,
+                                   "FLAGS": ",".join(flags)})
+                    continue
                 else:
                     pax_desde_cmp, pax_hasta_cmp = esperado
 
@@ -2373,7 +2401,7 @@ def main():
                     print(f"    ⚠ Sin tarifas leídas para {item['codigo']}")
                 filas_codigo = []
                 for t in tarifas:
-                    if t["moneda"] not in ("ARS", "USD"):
+                    if t["moneda"] not in ("ARS",) + MONEDAS_USD:
                         print(f"    ⚠ Moneda inesperada {t['moneda']!r} en {item['codigo']} "
                               f"(pax {t['pax_desde']}-{t['pax_hasta']}) — no se convierte a USD")
                     filas_codigo.append({

@@ -887,6 +887,23 @@ Decisiones de implementación:
   BOXLPO) se busca sólo por location y supplier. Al releer un proveedor, los
   códigos archivados que ya no aparecen (por ejemplo los de otro servicio de
   corridas anteriores) se borran al terminar de leerlo completo.
+- **Ajustes tras la primera corrida real multi-proveedor (BUE, TRFPO)**:
+  - *Prefijo de código*: si varios códigos genéricos son prefijo del específico
+    (`HRD42` → `HRD` y `HRD4`), se prefiere el más largo cuyo resto sea un
+    sufijo de vehículo conocido (`HRD42` = `HRD`+`42`, no `HRD4`+`2`). Antes
+    ganaba el más largo y daba -77% falsos. `COLISION_REVISAR` queda sólo en
+    las ambigüedades que el sufijo no resuelve.
+  - *Vehículos sin equivalente en TRFPO*: el sufijo `12` (Van 12) se compara
+    contra el tramo de "Sprinter 15 pax", igual que el `15`; ese vehículo sólo
+    existe en TRFPO para excursiones y cruceros-excursión. En traslados no hay
+    tramo equivalente, así que esas filas no se comparan y llevan
+    `SIN_EQUIVALENTE_TRFPO_<categoria>_<vehiculo>` (antes se comparaban con el
+    rango de pax del propio específico, que caía en el tramo equivocado). Si la
+    location tiene el vehículo propio en la tabla de bases (ej. USH, "Hi Ace/Van
+    12 pax") se usa ese. Las tablas de bases de BUE se confirmaron iguales a las
+    de la usuaria (excursión, traslado y cruceros).
+  - *Moneda BLU*: código de Tourplan para tarifas en dólares a tipo de cambio
+    "blue" (ej. Viabus). Se trata como USD, sin conversión.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la
