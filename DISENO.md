@@ -902,6 +902,8 @@ Decisiones de implementación:
     location tiene el vehículo propio en la tabla de bases (ej. USH, "Hi Ace/Van
     12 pax") se usa ese. Las tablas de bases de BUE se confirmaron iguales a las
     de la usuaria (excursión, traslado y cruceros).
+  - *Genérico en 0*: la fila lleva `TARIFA_GENERICO_CERO` (antes salía sin %
+    y sin ninguna bandera, ej. `MHAT`).
   - *Moneda BLU*: código de Tourplan para tarifas en dólares a tipo de cambio
     "blue" (ej. Viabus). Se trata como USD, sin conversión.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del

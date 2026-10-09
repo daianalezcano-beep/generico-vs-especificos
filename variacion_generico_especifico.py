@@ -1811,6 +1811,11 @@ def construir_comparacion_gap(filas):
                 diff_usd = round(tarifa_especifico - tarifa_generico, 2)
                 if tarifa_generico:
                     diff_pct = round((tarifa_especifico / tarifa_generico - 1) * 100, 2)
+                else:
+                    # Genérico en 0: no hay % posible y la diferencia en USD
+                    # es sólo el valor del específico — avisar para revisar
+                    # si está realmente en 0 en Tourplan.
+                    flags.append("TARIFA_GENERICO_CERO")
             else:
                 flags.append("SIN_TARIFA_USD_PARA_COMPARAR")
 
