@@ -1829,7 +1829,6 @@ def construir_comparacion_gap(filas):
 
 
 # ── Google Sheet como almacén ────────────────────────────────────────
-COLS_COMPARACION = COLS_GAP + ["ACTUALIZADO"]
 _COLS_NUM_FLOAT = ("TARIFA_VIGENTE", "TARIFA_USD")
 _COLS_NUM_INT = ("PAX_DESDE", "PAX_HASTA")
 
@@ -1842,7 +1841,7 @@ def abrir_spreadsheet():
     return gspread.authorize(creds).open_by_url(SHEET_URL)
 
 
-def obtener_hoja(sh, titulo, columnas):
+def obtener_hoja(sh, titulo, columnas, primera=False):
     """Devuelve la pestaña `titulo` (la crea si no existe) con `columnas`
     como encabezado. Si ya existía con otro encabezado, no la toca —
     lee por nombre de columna, así que sólo importa que estén todas."""
@@ -1851,6 +1850,11 @@ def obtener_hoja(sh, titulo, columnas):
             return ws
     ws = sh.add_worksheet(title=titulo, rows=2, cols=len(columnas))
     ws.update(range_name="A1", values=[columnas], value_input_option="RAW")
+    if primera:
+        try:
+            ws.update_index(0)
+        except Exception:
+            pass
     return ws
 
 
@@ -1909,6 +1913,258 @@ def reescribir_hoja(ws, columnas, filas, formato_pct_col=None):
         col = columnas.index(formato_pct_col) + 1
         rango = gspread.utils.rowcol_to_a1(2, col) + ":" + gspread.utils.rowcol_to_a1(len(valores), col)
         ws.format(rango, {"numberFormat": {"type": "NUMBER", "pattern": '0.00"%"'}})
+
+
+# ── Presentación visual del Sheet (formato, colores, RESUMEN) ─────────
+# Todo esto es sólo presentación: si falla (cuota, cambio de API) se avisa
+# y se sigue — nunca debe impedir que se guarden los datos.
+UMBRAL_IGUAL_PCT = 2.0     # |variación| <= esto se considera "igual al genérico"
+UMBRAL_FUERTE_PCT = 10.0   # a partir de acá el color de la variación es fuerte
+
+RES_SOBRE, RES_BAJO = "▲ SOBRE EL GENÉRICO", "▼ BAJO EL GENÉRICO"
+RES_IGUAL, RES_REVISAR, RES_SIN = "● IGUAL", "⚠ REVISAR", "— SIN COMPARAR"
+
+# Orden pensado para leer: quién, qué código, cuánto, resultado y recién
+# después los períodos y la fecha de actualización.
+COLS_COMPARACION = [
+    "LOCATION", "SUPPLIER_ESPECIFICO", "CODIGO_ESPECIFICO", "CODIGO_GENERICO",
+    "PAX_DESDE", "PAX_HASTA",
+    "TARIFA_GENERICO_USD", "TARIFA_ESPECIFICO_USD", "DIFERENCIA_USD", "DIFERENCIA_PCT",
+    "RESULTADO", "FLAGS",
+    "PERIODO_ESPECIFICO_DESDE", "PERIODO_ESPECIFICO_HASTA",
+    "PERIODO_GENERICO_DESDE", "PERIODO_GENERICO_HASTA", "ACTUALIZADO",
+]
+HOJA_RESUMEN = "RESUMEN"
+COLS_RESUMEN = ["LOCATION", "PROVEEDOR", "FILAS", "COMPARADAS", "PROMEDIO_%", "MIN_%", "MAX_%",
+                RES_SOBRE, RES_BAJO, RES_IGUAL, RES_REVISAR, RES_SIN]
+
+_COLORES = {
+    "header": "#1F3864", "banda": "#F3F6FA", "blanco": "#FFFFFF",
+    "rojo_fuerte": "#E06666", "rojo_suave": "#F4CCCC",
+    "verde_fuerte": "#93C47D", "verde_suave": "#D9EAD3",
+    "gris": "#EFEFEF", "ambar": "#FFE599", "texto_gris": "#999999", "rojo_texto": "#990000",
+}
+
+
+def _rgb(hexa):
+    h = hexa.lstrip("#")
+    return {"red": int(h[0:2], 16) / 255, "green": int(h[2:4], 16) / 255, "blue": int(h[4:6], 16) / 255}
+
+
+def _letra(col_idx0):
+    return gspread.utils.rowcol_to_a1(1, col_idx0 + 1).rstrip("0123456789")
+
+
+def _num(v):
+    """Número o None (celdas vacías llegan como "")."""
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def clasificar_resultado(f):
+    """Etiqueta legible de una fila de COMPARACION."""
+    pct = _num(f.get("DIFERENCIA_PCT"))
+    if pct is None:
+        return RES_SIN
+    if str(f.get("FLAGS") or "").strip():
+        return RES_REVISAR
+    if abs(pct) <= UMBRAL_IGUAL_PCT:
+        return RES_IGUAL
+    return RES_SOBRE if pct > 0 else RES_BAJO
+
+
+def construir_resumen(cmp_rows):
+    """Una fila por (location, proveedor específico) con el promedio,
+    mínimo y máximo de la variación % y cuántas filas hay de cada
+    resultado. El promedio es simple (cada fila pesa igual)."""
+    grupos = {}
+    for f in cmp_rows:
+        grupos.setdefault((str(f.get("LOCATION", "")), str(f.get("SUPPLIER_ESPECIFICO", ""))), []).append(f)
+    salida = []
+    for (loc, prov), filas in grupos.items():
+        pcts = [p for p in (_num(f.get("DIFERENCIA_PCT")) for f in filas) if p is not None]
+        cuenta = {r: 0 for r in (RES_SOBRE, RES_BAJO, RES_IGUAL, RES_REVISAR, RES_SIN)}
+        for f in filas:
+            cuenta[clasificar_resultado(f)] += 1
+        salida.append({
+            "LOCATION": loc, "PROVEEDOR": prov, "FILAS": len(filas), "COMPARADAS": len(pcts),
+            "PROMEDIO_%": round(sum(pcts) / len(pcts), 2) if pcts else None,
+            "MIN_%": min(pcts) if pcts else None, "MAX_%": max(pcts) if pcts else None,
+            **cuenta})
+    # De más caro a más barato respecto del genérico; sin comparar al final.
+    salida.sort(key=lambda r: (r["PROMEDIO_%"] is None, -(r["PROMEDIO_%"] or 0)))
+    return salida
+
+
+def _regla(sheet_id, rangos, tipo, valor, bg=None, fg=None, bold=False, idx=0):
+    fmt = {}
+    if bg:
+        fmt["backgroundColor"] = _rgb(bg)
+    if fg or bold:
+        fmt["textFormat"] = {**({"foregroundColor": _rgb(fg)} if fg else {}), **({"bold": True} if bold else {})}
+    return {"addConditionalFormatRule": {"index": idx, "rule": {
+        "ranges": [{"sheetId": sheet_id, **r} for r in rangos],
+        "booleanRule": {"condition": {"type": tipo, "values": [{"userEnteredValue": valor}]}, "format": fmt}}}}
+
+
+def _limpiar_formato_previo(sh, ws):
+    """Pedidos para borrar reglas condicionales y bandas anteriores de la
+    pestaña (así reaplicar el formato en cada corrida no las duplica)."""
+    meta = sh.fetch_sheet_metadata({"fields": "sheets(properties(sheetId),conditionalFormats,bandedRanges(bandedRangeId))"})
+    reqs = []
+    for hoja in meta.get("sheets", []):
+        if hoja["properties"]["sheetId"] != ws.id:
+            continue
+        for i in reversed(range(len(hoja.get("conditionalFormats", [])))):
+            reqs.append({"deleteConditionalFormatRule": {"sheetId": ws.id, "index": i}})
+        for b in hoja.get("bandedRanges", []):
+            reqs.append({"deleteBanding": {"bandedRangeId": b["bandedRangeId"]}})
+    return reqs
+
+
+def _formato_base(sh, ws, columnas, n_filas, congelar_cols, anchos, formatos_num, con_bandas):
+    """Pedidos comunes: encabezado oscuro, filas/columnas congeladas, anchos,
+    formato numérico, filtro y (opcional) filas alternadas."""
+    sid, ncols = ws.id, len(columnas)
+    reqs = _limpiar_formato_previo(sh, ws)
+    reqs.append({"updateSheetProperties": {
+        "properties": {"sheetId": sid, "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": congelar_cols}},
+        "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount"}})
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": ncols},
+        "cell": {"userEnteredFormat": {
+            "backgroundColor": _rgb(_COLORES["header"]),
+            "textFormat": {"bold": True, "foregroundColor": _rgb(_COLORES["blanco"])},
+            "horizontalAlignment": "CENTER", "verticalAlignment": "MIDDLE", "wrapStrategy": "WRAP"}},
+        "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment,wrapStrategy)"}})
+    reqs.append({"updateDimensionProperties": {
+        "range": {"sheetId": sid, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+        "properties": {"pixelSize": 40}, "fields": "pixelSize"}})
+    for nombre, px in anchos.items():
+        if nombre in columnas:
+            i = columnas.index(nombre)
+            reqs.append({"updateDimensionProperties": {
+                "range": {"sheetId": sid, "dimension": "COLUMNS", "startIndex": i, "endIndex": i + 1},
+                "properties": {"pixelSize": px}, "fields": "pixelSize"}})
+    for nombre, patron in formatos_num.items():
+        if nombre in columnas:
+            i = columnas.index(nombre)
+            reqs.append({"repeatCell": {
+                "range": {"sheetId": sid, "startRowIndex": 1, "startColumnIndex": i, "endColumnIndex": i + 1},
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "NUMBER", "pattern": patron}}},
+                "fields": "userEnteredFormat.numberFormat"}})
+    reqs.append({"setBasicFilter": {"filter": {"range": {
+        "sheetId": sid, "startRowIndex": 0, "endRowIndex": max(n_filas + 1, 2),
+        "startColumnIndex": 0, "endColumnIndex": ncols}}}})
+    if con_bandas and n_filas:
+        reqs.append({"addBanding": {"bandedRange": {
+            "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": n_filas + 1,
+                      "startColumnIndex": 0, "endColumnIndex": ncols},
+            "rowProperties": {"headerColor": _rgb(_COLORES["header"]),
+                              "firstBandColor": _rgb(_COLORES["blanco"]),
+                              "secondBandColor": _rgb(_COLORES["banda"])}}}})
+    return reqs
+
+
+def formato_comparacion(sh, ws, columnas, n_filas):
+    """Colores de la hoja COMPARACION: variación en verde/rojo según cuánto se
+    aleja del genérico, resultado y banderas resaltados, y las filas que no se
+    pudieron comparar atenuadas."""
+    sid = ws.id
+    c = {n: columnas.index(n) for n in columnas}
+    reqs = _formato_base(
+        sh, ws, columnas, n_filas, congelar_cols=3,
+        anchos={"LOCATION": 70, "SUPPLIER_ESPECIFICO": 110, "CODIGO_ESPECIFICO": 120, "CODIGO_GENERICO": 120,
+                "PAX_DESDE": 60, "PAX_HASTA": 60, "TARIFA_GENERICO_USD": 100, "TARIFA_ESPECIFICO_USD": 100,
+                "DIFERENCIA_USD": 95, "DIFERENCIA_PCT": 95, "RESULTADO": 170, "FLAGS": 260,
+                "PERIODO_ESPECIFICO_DESDE": 95, "PERIODO_ESPECIFICO_HASTA": 95,
+                "PERIODO_GENERICO_DESDE": 95, "PERIODO_GENERICO_HASTA": 95, "ACTUALIZADO": 130},
+        formatos_num={"TARIFA_GENERICO_USD": "#,##0.00", "TARIFA_ESPECIFICO_USD": "#,##0.00",
+                      "DIFERENCIA_USD": "+#,##0.00;-#,##0.00;0.00", "DIFERENCIA_PCT": '+0.00"%";-0.00"%";0.00"%"'},
+        con_bandas=True)
+    P = _letra(c["DIFERENCIA_PCT"])
+    R, F = _letra(c["RESULTADO"]), _letra(c["FLAGS"])
+    fila_completa = {"startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": len(columnas)}
+    cols_dif = {"startRowIndex": 1, "startColumnIndex": c["DIFERENCIA_USD"], "endColumnIndex": c["DIFERENCIA_PCT"] + 1}
+    col_res = {"startRowIndex": 1, "startColumnIndex": c["RESULTADO"], "endColumnIndex": c["RESULTADO"] + 1}
+    col_flags = {"startRowIndex": 1, "startColumnIndex": c["FLAGS"], "endColumnIndex": c["FLAGS"] + 1}
+    fuerte, igual = UMBRAL_FUERTE_PCT, UMBRAL_IGUAL_PCT
+    reglas = [
+        # filas sin comparar: texto gris
+        ([fila_completa], f'=${R}2="{RES_SIN}"', None, _COLORES["texto_gris"], False),
+        # variación (USD y %): rojo = el específico sale más caro que el genérico
+        ([cols_dif], f"=AND(ISNUMBER(${P}2),${P}2>{fuerte})", _COLORES["rojo_fuerte"], None, True),
+        ([cols_dif], f"=AND(ISNUMBER(${P}2),${P}2>{igual})", _COLORES["rojo_suave"], None, False),
+        ([cols_dif], f"=AND(ISNUMBER(${P}2),${P}2<-{fuerte})", _COLORES["verde_fuerte"], None, True),
+        ([cols_dif], f"=AND(ISNUMBER(${P}2),${P}2<-{igual})", _COLORES["verde_suave"], None, False),
+        ([cols_dif], f"=AND(ISNUMBER(${P}2),ABS(${P}2)<={igual})", _COLORES["gris"], None, False),
+        # resultado
+        ([col_res], f'=ISNUMBER(SEARCH("SOBRE",${R}2))', _COLORES["rojo_suave"], None, True),
+        ([col_res], f'=ISNUMBER(SEARCH("BAJO",${R}2))', _COLORES["verde_suave"], None, True),
+        ([col_res], f'=ISNUMBER(SEARCH("IGUAL",${R}2))', _COLORES["gris"], None, True),
+        ([col_res], f'=ISNUMBER(SEARCH("REVISAR",${R}2))', _COLORES["ambar"], None, True),
+        # banderas: las "SIN_..." (no se pudo comparar) en rojo, el resto en ámbar
+        ([col_flags], f'=REGEXMATCH(${F}2,"SIN_")', _COLORES["rojo_suave"], _COLORES["rojo_texto"], True),
+        ([col_flags], f"=LEN(${F}2)>0", _COLORES["ambar"], None, False),
+    ]
+    for i, (rangos, formula, bg, fg, negrita) in enumerate(reglas):
+        reqs.append(_regla(sid, rangos, "CUSTOM_FORMULA", formula, bg=bg, fg=fg, bold=negrita, idx=i))
+    sh.batch_update({"requests": reqs})
+
+
+def formato_resumen(sh, ws, columnas, n_filas):
+    """RESUMEN: escala de color en el promedio (verde = más barato que el
+    genérico, rojo = más caro) y encabezados con el color de cada resultado."""
+    sid = ws.id
+    c = {n: columnas.index(n) for n in columnas}
+    reqs = _formato_base(
+        sh, ws, columnas, n_filas, congelar_cols=2,
+        anchos={"LOCATION": 70, "PROVEEDOR": 120, "FILAS": 65, "COMPARADAS": 95, "PROMEDIO_%": 100,
+                "MIN_%": 80, "MAX_%": 80, RES_SOBRE: 120, RES_BAJO: 120, RES_IGUAL: 90,
+                RES_REVISAR: 90, RES_SIN: 120},
+        formatos_num={"PROMEDIO_%": '+0.00"%";-0.00"%";0.00"%"', "MIN_%": '+0.00"%";-0.00"%";0.00"%"',
+                      "MAX_%": '+0.00"%";-0.00"%";0.00"%"'},
+        con_bandas=True)
+    for nombre, color in ((RES_SOBRE, "rojo_fuerte"), (RES_BAJO, "verde_fuerte"), (RES_IGUAL, "texto_gris"),
+                          (RES_REVISAR, "ambar"), (RES_SIN, "texto_gris")):
+        i = c[nombre]
+        reqs.append({"repeatCell": {
+            "range": {"sheetId": sid, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": i, "endColumnIndex": i + 1},
+            "cell": {"userEnteredFormat": {"backgroundColor": _rgb(_COLORES[color]),
+                                           "textFormat": {"bold": True, "foregroundColor": _rgb(_COLORES["header"] if color == "ambar" else _COLORES["blanco"])}}},
+            "fields": "userEnteredFormat(backgroundColor,textFormat)"}})
+    i = c["PROMEDIO_%"]
+    reqs.append({"addConditionalFormatRule": {"index": 0, "rule": {
+        "ranges": [{"sheetId": sid, "startRowIndex": 1, "startColumnIndex": i, "endColumnIndex": i + 1}],
+        "gradientRule": {
+            "minpoint": {"color": _rgb(_COLORES["verde_fuerte"]), "type": "MIN"},
+            "midpoint": {"color": _rgb(_COLORES["blanco"]), "type": "NUMBER", "value": "0"},
+            "maxpoint": {"color": _rgb(_COLORES["rojo_fuerte"]), "type": "MAX"}}}}})
+    sh.batch_update({"requests": reqs})
+
+
+def formato_tarifas(sh, ws, columnas, n_filas):
+    """GENERICOS / ESPECIFICOS: encabezado, filas congeladas, anchos y
+    formato numérico (sin colores: son datos de trabajo)."""
+    reqs = _formato_base(
+        sh, ws, columnas, n_filas, congelar_cols=2,
+        anchos={"SUPPLIER": 90, "PRODUCT_CODE": 120, "ES_GENERICO": 90, "GENERICO": 90, "DESCRIPCION": 320,
+                "PERIODO_DESDE": 95, "PERIODO_HASTA": 95, "PRICE_CODE": 80, "PAX_DESDE": 70, "PAX_HASTA": 70,
+                "TARIFA_VIGENTE": 100, "MONEDA": 70, "TARIFA_USD": 100, "LOCATION": 75, "TIMESTAMP": 140},
+        formatos_num={"TARIFA_VIGENTE": "#,##0.00", "TARIFA_USD": "#,##0.00"},
+        con_bandas=False)
+    sh.batch_update({"requests": reqs})
+
+
+def aplicar_formato(nombre, fn, sh, ws, columnas, n_filas):
+    try:
+        fn(sh, ws, columnas, n_filas)
+    except Exception as e:
+        print(f"    ⚠ No pude aplicar el formato visual de {nombre} (los datos están guardados): {e}")
 
 
 def mezclar_tarifas(existentes, nuevas, reemplazar_grupos, reemplazar_codigos):
@@ -2301,10 +2557,14 @@ def main():
     ws_gen = obtener_hoja(sh, HOJA_GENERICOS, COLS_TARIFAS)
     ws_esp = obtener_hoja(sh, HOJA_ESPECIFICOS, COLS_TARIFAS)
     ws_cmp = obtener_hoja(sh, HOJA_COMPARACION, COLS_COMPARACION)
+    ws_res = obtener_hoja(sh, HOJA_RESUMEN, COLS_RESUMEN, primera=True)
 
     esp_rows = leer_filas(ws_esp, normalizar_fila_tarifa)
     gen_rows = leer_filas(ws_gen, normalizar_fila_tarifa)
     cmp_rows = leer_filas(ws_cmp)
+    # Formato visual de las pestañas de datos (una vez por corrida).
+    aplicar_formato(HOJA_GENERICOS, formato_tarifas, sh, ws_gen, COLS_TARIFAS, len(gen_rows))
+    aplicar_formato(HOJA_ESPECIFICOS, formato_tarifas, sh, ws_esp, COLS_TARIFAS, len(esp_rows))
     if modo == "ACTUALIZAR" and not esp_rows and not ACTUALIZAR_SELECCION:
         print(f"No hay específicos registrados en la pestaña {HOJA_ESPECIFICOS} — "
               f"corré antes un modo ESPECIFICO o COMPLETO.")
@@ -2344,8 +2604,15 @@ def main():
         for f in comp:
             f["ACTUALIZADO"] = ahora
         cmp_rows = [f for f in cmp_rows if str(f.get("LOCATION", "")) not in locs] + comp
-        reescribir_hoja(ws_cmp, COLS_COMPARACION, cmp_rows, formato_pct_col="DIFERENCIA_PCT")
-        print(f"✅ {HOJA_COMPARACION}: {len(comp)} filas recalculadas ({', '.join(sorted(locs))})")
+        for f in cmp_rows:
+            f["RESULTADO"] = clasificar_resultado(f)
+        reescribir_hoja(ws_cmp, COLS_COMPARACION, cmp_rows)
+        aplicar_formato(HOJA_COMPARACION, formato_comparacion, sh, ws_cmp, COLS_COMPARACION, len(cmp_rows))
+        resumen = construir_resumen(cmp_rows)
+        reescribir_hoja(ws_res, COLS_RESUMEN, resumen)
+        aplicar_formato(HOJA_RESUMEN, formato_resumen, sh, ws_res, COLS_RESUMEN, len(resumen))
+        print(f"✅ {HOJA_COMPARACION}: {len(comp)} filas recalculadas ({', '.join(sorted(locs))}) "
+              f"— {HOJA_RESUMEN}: {len(resumen)} proveedores")
         locs_sucias -= locs
         comparo_alguna_vez = True
 

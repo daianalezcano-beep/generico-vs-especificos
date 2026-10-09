@@ -45,8 +45,12 @@ En el Sheet de cada genérico (las pestañas se crean solas):
   pax break.
 - `ESPECIFICOS`: lo mismo para los proveedores específicos (también es el
   registro de qué se puede actualizar).
-- `COMPARACION`: el gap genérico vs específico, con `FLAGS` para lo que hay que
-  revisar. Se calcula al terminar cada proveedor y al final de la corrida.
+- `RESUMEN` (primera pestaña): una fila por proveedor con el promedio, mínimo y
+  máximo de la variación y cuántas filas hay sobre/bajo/igual al genérico o por
+  revisar. Es el punto de partida para ver el panorama.
+- `COMPARACION`: el gap genérico vs específico en colores (rojo = el específico
+  sale más caro que el genérico, verde = más barato), con `RESULTADO` y `FLAGS`
+  para lo que hay que revisar. Se calcula al terminar cada proveedor y al final de la corrida.
 
 Las tarifas se guardan código a código mientras se leen; si se aborta o hay un
 error no se pierde lo ya leído.

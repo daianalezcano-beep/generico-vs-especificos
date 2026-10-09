@@ -906,6 +906,24 @@ Decisiones de implementación:
     y sin ninguna bandera, ej. `MHAT`).
   - *Moneda BLU*: código de Tourplan para tarifas en dólares a tipo de cambio
     "blue" (ej. Viabus). Se trata como USD, sin conversión.
+- **Presentación visual del Sheet** (pedido: el resultado era confuso por la
+  cantidad de información). `COMPARACION` ahora se lee de izquierda a derecha:
+  quién (location, proveedor, códigos) → pax → tarifas genérico/específico →
+  diferencia USD y % → **RESULTADO** → banderas → recién al final períodos y
+  fecha de actualización. Encabezado oscuro, primeras filas y 3 columnas
+  congeladas, filtros, filas alternadas, números con formato. Colores: la
+  variación (USD y %) va en rojo si el específico sale más caro que el genérico
+  y verde si sale más barato (suave a ±2%, fuerte a ±10%; gris dentro de ±2%);
+  `RESULTADO` = ▲ SOBRE EL GENÉRICO / ▼ BAJO EL GENÉRICO / ● IGUAL / ⚠ REVISAR
+  (la fila tiene alguna bandera) / — SIN COMPARAR (atenuada en gris); las
+  banderas `SIN_*` en rojo y el resto en ámbar. Los umbrales están en
+  `UMBRAL_IGUAL_PCT` y `UMBRAL_FUERTE_PCT`. Pestaña nueva **`RESUMEN`** (primera):
+  una fila por location + proveedor con cantidad de filas, promedio/mínimo/máximo
+  de la variación % (promedio simple, cada fila pesa igual) y cuántas filas hay de
+  cada resultado, ordenada de más caro a más barato, con escala de color en el
+  promedio. `GENERICOS` y `ESPECIFICOS` sólo reciben encabezado, filtros y
+  formato numérico. Todo es presentación: si el formato falla se avisa en el log
+  y los datos igual se guardan. Aún sin validar contra Google Sheets real.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la
