@@ -39,5 +39,5 @@ if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
 )
 
 REM Solo localhost: la app no tiene login propio.
-streamlit run app.py --server.address=localhost
+streamlit run app.py --server.address=localhost --server.port=8502
 pause

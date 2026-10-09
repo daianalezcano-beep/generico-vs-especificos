@@ -14,7 +14,7 @@ diseño, hallazgos de validación y pendientes).
 1. **Instalar** (una sola vez): Python 3, Git y Google Chrome. Clonar el repo
    en una carpeta con ruta corta.
 2. **Abrir la app**: doble clic en `app/run_app.bat` (la primera vez instala
-   las dependencias). Se abre en `localhost:8501`. Para traer cambios nuevos
+   las dependencias). Se abre en `localhost:8502`. Para traer cambios nuevos
    del repo: `app/actualizar_app.bat`.
 3. **⚙️ Configuración** (una vez por PC, se guarda en
    `~/.tourplan-nx-app/config.json`, fuera del repo): usuario y password de
