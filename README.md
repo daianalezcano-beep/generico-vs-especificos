@@ -35,7 +35,8 @@ diseño, hallazgos de validación y pendientes).
    - **Rango de fechas** (opcional; sin rango = período vigente hoy).
    - **Actualizar variación**: para usar justo después de modificar valores en
      Tourplan; se elige el servicio y el/los proveedores que cambiaron y sólo
-     se vuelven a leer esos.
+     se vuelven a leer esos. *Recalcular comparación* actualiza banderas, colores
+     y resumen con lo ya archivado, sin leer Tourplan.
 
 ## Qué guarda
 

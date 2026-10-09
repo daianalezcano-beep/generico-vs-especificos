@@ -924,6 +924,13 @@ Decisiones de implementación:
   promedio. `GENERICOS` y `ESPECIFICOS` sólo reciben encabezado, filtros y
   formato numérico. Todo es presentación: si el formato falla se avisa en el log
   y los datos igual se guardan. Aún sin validar contra Google Sheets real.
+- **Recalcular comparación sin leer Tourplan** (`RECALCULAR`): botón "🧮
+  Recalcular comparación" en la sección Actualizar variación. Con el servicio
+  elegido (su Sheet) recalcula `COMPARACION` y `RESUMEN` a partir de lo ya
+  archivado en `GENERICOS` y `ESPECIFICOS`, para todas las locations: sirve para
+  reflejar cambios de banderas, de lógica o de formato sin abrir Tourplan ni
+  gastar una licencia. "Actualizar variación" en cambio SÍ vuelve a leer lo que
+  se elija; si se elige un genérico (ej. TRFPO) se vuelve a leer completo.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la

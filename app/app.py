@@ -302,9 +302,19 @@ def render_principal():
         format_func=lambda r: f"{r[0]} — {r[1]} ({r[2]})")
     todos_esp = st.checkbox("Actualizar todos los específicos registrados (más lento)",
                             disabled=state["running"] or not registrados)
+    if any(r[2] == "genérico" for r in cambiados):
+        st.warning("Elegiste un genérico: se va a volver a leer ese genérico COMPLETO desde Tourplan "
+                   "(tarda). Si sólo querés reflejar cambios de banderas o de lógica en el Sheet, "
+                   "usá \"Recalcular comparación\" de abajo, que no lee Tourplan.")
     upd_clicked = st.button(
         "🔄 Actualizar variación", disabled=not (usuario and password and sheet_upd and SCRIPT_PATH.exists())
         or state["running"] or not (cambiados or todos_esp))
+
+    recalc_clicked = st.button(
+        "🧮 Recalcular comparación (sin leer Tourplan)",
+        disabled=not (sheet_upd and SCRIPT_PATH.exists()) or state["running"],
+        help="Recalcula COMPARACION y RESUMEN con lo que ya está archivado en el Sheet del servicio "
+             "elegido (banderas, colores, resumen). No abre Tourplan ni vuelve a leer ningún código.")
 
     def _fmt(d):
         return d.strftime("%d/%m/%Y") if d else ""
@@ -331,6 +341,9 @@ def render_principal():
             **env_comun, "TOURPLAN_SHEET_URL": sheet_upd, "TOURPLAN_MODO": "ACTUALIZAR",
             "TOURPLAN_ACTUALIZAR": "" if todos_esp else ",".join(f"{r[0]}@{r[1]}" for r in cambiados),
         })
+
+    if recalc_clicked:
+        _lanzar(state, {"TOURPLAN_SHEET_URL": sheet_upd, "TOURPLAN_MODO": "RECALCULAR"})
 
     if abort_clicked:
         state["abort_requested"] = True

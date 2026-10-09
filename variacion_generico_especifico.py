@@ -31,6 +31,8 @@
 #                  location y los compara contra el genérico elegido
 #                  (TOURPLAN_GENERICO), ya archivado.
 #     COMPLETO   → GENERICO + ESPECIFICO en la misma corrida.
+#     RECALCULAR → NO toca Tourplan: recalcula COMPARACION y RESUMEN con lo ya
+#                  archivado (para reflejar cambios de lógica/banderas).
 #     ACTUALIZAR → re-extrae todos los específicos ya registrados en la
 #                  pestaña ESPECIFICOS y recalcula la comparación.
 #
@@ -2290,9 +2292,11 @@ def armar_plan(modo, esp_registrados, gen_archivados):
 
 
 def validar_config(modo):
-    if modo not in ("GENERICO", "ESPECIFICO", "COMPLETO", "ACTUALIZAR"):
+    if modo not in ("GENERICO", "ESPECIFICO", "COMPLETO", "ACTUALIZAR", "RECALCULAR"):
         raise ValueError(f"TOURPLAN_MODO inválido: {modo!r} — usar GENERICO, "
-                         f"ESPECIFICO, COMPLETO o ACTUALIZAR")
+                         f"ESPECIFICO, COMPLETO, ACTUALIZAR o RECALCULAR")
+    if modo == "RECALCULAR":
+        return  # no toca Tourplan: no hacen falta usuario/password ni locations
     if not (USERNAME and PASSWORD):
         raise ValueError("Faltan usuario/password de Tourplan (⚙️ Configuración de la app).")
     if modo != "ACTUALIZAR" and not LOCATIONS:
@@ -2548,7 +2552,7 @@ def main():
     validar_config(modo)
     print(f"MODO={modo}  genérico={GENERICO or '-'}  locations={LOCATIONS or '(registradas)'}  "
           f"específicos={ESPECIFICOS or '-'}")
-    if TIPO_CAMBIO_ARS_USD is None:
+    if TIPO_CAMBIO_ARS_USD is None and modo != "RECALCULAR":
         print("⚠ Sin tipo de cambio ARS→USD — las filas en ARS quedan sin TARIFA_USD.")
 
     # Se abre el Sheet ANTES de loguear en Tourplan: un error de
@@ -2570,8 +2574,8 @@ def main():
               f"corré antes un modo ESPECIFICO o COMPLETO.")
         return
 
-    plan = armar_plan(modo, esp_rows, gen_rows)
-    if not plan:
+    plan = [] if modo == "RECALCULAR" else armar_plan(modo, esp_rows, gen_rows)
+    if not plan and modo != "RECALCULAR":
         print("Nada para actualizar con esa selección.")
         return
 
@@ -2615,6 +2619,22 @@ def main():
               f"— {HOJA_RESUMEN}: {len(resumen)} proveedores")
         locs_sucias -= locs
         comparo_alguna_vez = True
+
+    if modo == "RECALCULAR":
+        # Sólo recalcula COMPARACION y RESUMEN con lo ya archivado: no abre
+        # Tourplan (no gasta una licencia) ni vuelve a leer ningún código.
+        locs = set(LOCATIONS) or ({f["LOCATION"] for f in gen_rows} | {f["LOCATION"] for f in esp_rows})
+        if not locs:
+            print(f"No hay nada archivado en {HOJA_GENERICOS} / {HOJA_ESPECIFICOS} para comparar.")
+            return
+        print(f"Recalculando la comparación con lo archivado ({', '.join(sorted(locs))}) — sin leer Tourplan.")
+        actualizar_comparacion(locs)
+        cuenta = {}
+        for f in cmp_rows:
+            cuenta[f["RESULTADO"]] = cuenta.get(f["RESULTADO"], 0) + 1
+        for etiqueta, n in sorted(cuenta.items(), key=lambda x: -x[1]):
+            print(f"    {etiqueta}: {n}")
+        return
 
     driver = crear_driver()
     cola, abortado, fallo_fatal = [], False, False
