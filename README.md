@@ -49,7 +49,9 @@ En el Sheet de cada genérico (las pestañas se crean solas):
 - `RESUMEN` (primera pestaña): una fila por proveedor con el promedio, mínimo y
   máximo de la variación y cuántas filas hay sobre/bajo/igual al genérico o por
   revisar. Es el punto de partida para ver el panorama.
-- `COMPARACION`: el gap genérico vs específico en colores (rojo = el específico
+- `MATRIZ`: la comparación lado a lado — una fila por código genérico y vehículo, una
+  columna por proveedor con su variación % (mapa de calor) y el mejor proveedor.
+- `COMPARACION`: el detalle fila por fila del gap genérico vs específico en colores (rojo = el específico
   sale más caro que el genérico, verde = más barato), con `RESULTADO` y `FLAGS`
   para lo que hay que revisar. Se calcula al terminar cada proveedor y al final de la corrida.
 

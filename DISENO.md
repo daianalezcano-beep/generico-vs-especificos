@@ -931,6 +931,16 @@ Decisiones de implementación:
   reflejar cambios de banderas, de lógica o de formato sin abrir Tourplan ni
   gastar una licencia. "Actualizar variación" en cambio SÍ vuelve a leer lo que
   se elija; si se elige un genérico (ej. TRFPO) se vuelve a leer completo.
+- **Pestaña `MATRIZ`** (comparación lado a lado): una fila por location + código
+  genérico + vehículo (lo que sobra del código específico: AU, MV, 12, 15, 19, 24,
+  37, 42; `(sin sufijo)` para códigos idénticos al genérico, como los peajes) y una
+  columna por proveedor con su variación % contra el genérico, como mapa de calor
+  (mismos umbrales y colores que COMPARACION). Además: tarifa del genérico, mejor
+  proveedor (menor tarifa en USD) y su %. Si un proveedor tiene varios tramos de pax
+  para la misma celda se muestra el promedio y la celda lleva una nota con cada
+  tramo; las celdas con bandera van en cursiva ámbar con nota. Sólo entran filas que
+  se pudieron comparar (las sin comparar quedan en COMPARACION). En COMPARACION, la
+  fila "sin comparar" se atenúa pero RESUMEN/FLAGS conservan su color.
 - **Navegación por la lupa** (portada de Drive-TP-NX-App): los códigos del
   mismo supplier se encadenan — el primero se abre buscando sólo por
   proveedor y los siguientes por el popover de la lupa, con caída a la

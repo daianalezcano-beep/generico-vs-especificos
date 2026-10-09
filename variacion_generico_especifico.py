@@ -2090,14 +2090,18 @@ def formato_comparacion(sh, ws, columnas, n_filas):
         con_bandas=True)
     P = _letra(c["DIFERENCIA_PCT"])
     R, F = _letra(c["RESULTADO"]), _letra(c["FLAGS"])
-    fila_completa = {"startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": len(columnas)}
+    # Atenuar la fila sin comparar, salvo RESULTADO y FLAGS (que llevan su propio color).
+    filas_atenuar = [
+        {"startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": c["RESULTADO"]},
+        {"startRowIndex": 1, "startColumnIndex": c["FLAGS"] + 1, "endColumnIndex": len(columnas)}]
     cols_dif = {"startRowIndex": 1, "startColumnIndex": c["DIFERENCIA_USD"], "endColumnIndex": c["DIFERENCIA_PCT"] + 1}
     col_res = {"startRowIndex": 1, "startColumnIndex": c["RESULTADO"], "endColumnIndex": c["RESULTADO"] + 1}
     col_flags = {"startRowIndex": 1, "startColumnIndex": c["FLAGS"], "endColumnIndex": c["FLAGS"] + 1}
     fuerte, igual = UMBRAL_FUERTE_PCT, UMBRAL_IGUAL_PCT
     reglas = [
         # filas sin comparar: texto gris
-        ([fila_completa], f'=${R}2="{RES_SIN}"', None, _COLORES["texto_gris"], False),
+        (filas_atenuar, f'=${R}2="{RES_SIN}"', None, _COLORES["texto_gris"], False),
+        ([col_res], f'=${R}2="{RES_SIN}"', _COLORES["rojo_suave"], _COLORES["rojo_texto"], True),
         # variación (USD y %): rojo = el específico sale más caro que el genérico
         ([cols_dif], f"=AND(ISNUMBER(${P}2),${P}2>{fuerte})", _COLORES["rojo_fuerte"], None, True),
         ([cols_dif], f"=AND(ISNUMBER(${P}2),${P}2>{igual})", _COLORES["rojo_suave"], None, False),
@@ -2146,6 +2150,123 @@ def formato_resumen(sh, ws, columnas, n_filas):
             "minpoint": {"color": _rgb(_COLORES["verde_fuerte"]), "type": "MIN"},
             "midpoint": {"color": _rgb(_COLORES["blanco"]), "type": "NUMBER", "value": "0"},
             "maxpoint": {"color": _rgb(_COLORES["rojo_fuerte"]), "type": "MAX"}}}}})
+    sh.batch_update({"requests": reqs})
+
+
+HOJA_MATRIZ = "MATRIZ"
+COLS_MATRIZ_FIJAS = ["LOCATION", "CODIGO_GENERICO", "VEHICULO", "TARIFA_GENERICO_USD",
+                     "MEJOR_PROVEEDOR", "MEJOR_%"]
+_ORDEN_VEHICULOS = ["AU", "MV", "12", "15", "19", "24", "37", "42"]
+
+
+def _etiqueta_vehiculo(resto):
+    """Lo que sobra del código específico después del código genérico (AU, MV,
+    19, 24, 42...) con el nombre del vehículo si se conoce."""
+    if resto == "":
+        return "(sin sufijo)"
+    nombre = SUFIJO_VEHICULO.get(resto.upper())
+    return f"{resto} · {nombre}" if nombre else resto
+
+
+def construir_matriz(cmp_rows):
+    """Vista de comparación lado a lado: una fila por (location, código
+    genérico, vehículo) y una columna por proveedor con su variación % contra
+    el genérico. Si un proveedor tiene más de un tramo de pax para la misma
+    celda se muestra el promedio. Devuelve (columnas, filas, notas) donde
+    `notas` = {(fila0, proveedor): {"texto", "bandera"}} para las celdas con alguna
+    bandera o con varios tramos de pax promediados."""
+    grupos = {}
+    for f in cmp_rows:
+        gen, esp = str(f.get("CODIGO_GENERICO") or ""), str(f.get("CODIGO_ESPECIFICO") or "")
+        pct = _num(f.get("DIFERENCIA_PCT"))
+        if not gen or not esp.startswith(gen) or pct is None:
+            continue
+        clave = (str(f.get("LOCATION", "")), gen, esp[len(gen):].upper())
+        grupos.setdefault(clave, {}).setdefault(str(f.get("SUPPLIER_ESPECIFICO", "")), []).append(f)
+
+    proveedores = sorted({p for g in grupos.values() for p in g})
+    columnas = COLS_MATRIZ_FIJAS + proveedores
+
+    def orden(clave):
+        loc, gen, resto = clave
+        return (loc, gen, _ORDEN_VEHICULOS.index(resto) if resto in _ORDEN_VEHICULOS else 99, resto)
+
+    filas, notas = [], {}
+    for i, clave in enumerate(sorted(grupos, key=orden)):
+        loc, gen, resto = clave
+        por_prov = grupos[clave]
+        gen_usd = _num(next(iter(por_prov.values()))[0].get("TARIFA_GENERICO_USD"))
+        fila = {"LOCATION": loc, "CODIGO_GENERICO": gen, "VEHICULO": _etiqueta_vehiculo(resto),
+                "TARIFA_GENERICO_USD": gen_usd}
+        mejores = {}
+        for prov, filas_p in por_prov.items():
+            pcts = [_num(f.get("DIFERENCIA_PCT")) for f in filas_p]
+            usds = [u for u in (_num(f.get("TARIFA_ESPECIFICO_USD")) for f in filas_p) if u is not None]
+            fila[prov] = round(sum(pcts) / len(pcts), 2)
+            if usds:
+                mejores[prov] = sum(usds) / len(usds)
+            banderas = sorted({fl for f in filas_p for fl in str(f.get("FLAGS") or "").split(",") if fl})
+            partes = []
+            if banderas:
+                partes.append("Revisar en COMPARACION: " + ", ".join(banderas))
+            if len(filas_p) > 1:
+                partes.append("Promedio de " + str(len(filas_p)) + " tramos de pax: " + " | ".join(
+                    f"{f.get('PAX_DESDE')}-{f.get('PAX_HASTA')}: {_num(f.get('DIFERENCIA_PCT')):+.2f}%"
+                    for f in sorted(filas_p, key=lambda x: _num(x.get('PAX_DESDE')) or 0)))
+            if partes:
+                notas[(i, prov)] = {"texto": "\n".join(partes), "bandera": bool(banderas)}
+        if mejores:
+            mejor = min(mejores, key=mejores.get)
+            fila["MEJOR_PROVEEDOR"], fila["MEJOR_%"] = mejor, fila[mejor]
+        filas.append(fila)
+    return columnas, filas, notas
+
+
+def formato_matriz(sh, ws, columnas, n_filas, notas=None):
+    """MATRIZ: mapa de calor de la variación % (rojo = el proveedor sale más
+    caro que el genérico, verde = más barato). Las celdas con bandera van en
+    cursiva ámbar; también llevan nota con el detalle las celdas que promedian varios tramos de pax."""
+    sid = ws.id
+    n_fijas = len(COLS_MATRIZ_FIJAS)
+    reqs = _formato_base(
+        sh, ws, columnas, n_filas, congelar_cols=3,
+        anchos={"LOCATION": 70, "CODIGO_GENERICO": 110, "VEHICULO": 150, "TARIFA_GENERICO_USD": 100,
+                "MEJOR_PROVEEDOR": 110, "MEJOR_%": 80, **{p: 85 for p in columnas[n_fijas:]}},
+        formatos_num={"TARIFA_GENERICO_USD": "#,##0.00", "MEJOR_%": '+0.00"%";-0.00"%";0.00"%"',
+                      **{p: '+0.00"%";-0.00"%";0.00"%"' for p in columnas[n_fijas:]}},
+        con_bandas=False)
+    # limpiar notas y estilo de celdas de corridas anteriores
+    reqs.append({"repeatCell": {
+        "range": {"sheetId": sid, "startRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": len(columnas)},
+        "cell": {}, "fields": "note,userEnteredFormat.textFormat"}})
+    rangos = [("MEJOR_%", columnas.index("MEJOR_%"), columnas.index("MEJOR_%") + 1)]
+    if len(columnas) > n_fijas:
+        rangos.append(("proveedores", n_fijas, len(columnas)))
+    idx = 0
+    for _, a, b in rangos:
+        L = _letra(a)
+        rango = [{"startRowIndex": 1, "startColumnIndex": a, "endColumnIndex": b}]
+        for formula, bg, neg in (
+                (f"=AND(ISNUMBER({L}2),{L}2>{UMBRAL_FUERTE_PCT})", _COLORES["rojo_fuerte"], True),
+                (f"=AND(ISNUMBER({L}2),{L}2>{UMBRAL_IGUAL_PCT})", _COLORES["rojo_suave"], False),
+                (f"=AND(ISNUMBER({L}2),{L}2<-{UMBRAL_FUERTE_PCT})", _COLORES["verde_fuerte"], True),
+                (f"=AND(ISNUMBER({L}2),{L}2<-{UMBRAL_IGUAL_PCT})", _COLORES["verde_suave"], False),
+                (f"=AND(ISNUMBER({L}2),ABS({L}2)<={UMBRAL_IGUAL_PCT})", _COLORES["gris"], False)):
+            reqs.append(_regla(sid, rango, "CUSTOM_FORMULA", formula, bg=bg, bold=neg, idx=idx))
+            idx += 1
+    for (i, prov), nota in (notas or {}).items():
+        if prov in columnas:
+            c = columnas.index(prov)
+            celda = {"note": nota["texto"]}
+            campos = "note"
+            if nota["bandera"]:
+                celda["userEnteredFormat"] = {"textFormat": {
+                    "italic": True, "bold": True, "foregroundColor": _rgb("#B45F06")}}
+                campos += ",userEnteredFormat.textFormat"
+            reqs.append({"repeatCell": {
+                "range": {"sheetId": sid, "startRowIndex": i + 1, "endRowIndex": i + 2,
+                          "startColumnIndex": c, "endColumnIndex": c + 1},
+                "cell": celda, "fields": campos}})
     sh.batch_update({"requests": reqs})
 
 
@@ -2562,6 +2683,7 @@ def main():
     ws_esp = obtener_hoja(sh, HOJA_ESPECIFICOS, COLS_TARIFAS)
     ws_cmp = obtener_hoja(sh, HOJA_COMPARACION, COLS_COMPARACION)
     ws_res = obtener_hoja(sh, HOJA_RESUMEN, COLS_RESUMEN, primera=True)
+    ws_mat = obtener_hoja(sh, HOJA_MATRIZ, COLS_MATRIZ_FIJAS)
 
     esp_rows = leer_filas(ws_esp, normalizar_fila_tarifa)
     gen_rows = leer_filas(ws_gen, normalizar_fila_tarifa)
@@ -2615,8 +2737,12 @@ def main():
         resumen = construir_resumen(cmp_rows)
         reescribir_hoja(ws_res, COLS_RESUMEN, resumen)
         aplicar_formato(HOJA_RESUMEN, formato_resumen, sh, ws_res, COLS_RESUMEN, len(resumen))
+        cols_m, filas_m, notas_m = construir_matriz(cmp_rows)
+        reescribir_hoja(ws_mat, cols_m, filas_m)
+        aplicar_formato(HOJA_MATRIZ, lambda sh_, ws_, c_, n_: formato_matriz(sh_, ws_, c_, n_, notas_m),
+                        sh, ws_mat, cols_m, len(filas_m))
         print(f"✅ {HOJA_COMPARACION}: {len(comp)} filas recalculadas ({', '.join(sorted(locs))}) "
-              f"— {HOJA_RESUMEN}: {len(resumen)} proveedores")
+              f"— {HOJA_RESUMEN}: {len(resumen)} proveedores — {HOJA_MATRIZ}: {len(filas_m)} filas")
         locs_sucias -= locs
         comparo_alguna_vez = True
 
